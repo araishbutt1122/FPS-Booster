@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Users collection: Allow read and write so gaming client can sync boost stats, ping, and PRO status
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Payments collection: Allow create for user payment receipts, and read/update for Admin approval
+    match /payments/{paymentId} {
+      allow read, write: if true;
+    }
+
+    // Admin collection: wallet statistics and platform aggregation
+    match /admin/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Default rule: block all unhandled paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

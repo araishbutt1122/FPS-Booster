@@ -1,0 +1,135 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with gaming boost status and pro subscription details",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "User gamer tag or name",
+          "maxLength": 64
+        },
+        "deviceId": {
+          "type": "string",
+          "description": "Unique device or anonymous auth ID",
+          "maxLength": 128
+        },
+        "isPro": {
+          "type": "boolean",
+          "description": "Whether the user has PRO VIP access"
+        },
+        "proExpiry": {
+          "type": "number",
+          "description": "Expiration timestamp in milliseconds"
+        },
+        "totalBoostTime": {
+          "type": "number",
+          "description": "Total accumulated boost time in seconds"
+        },
+        "activeFps": {
+          "type": "string",
+          "description": "Active FPS mode (60, 90, 120)",
+          "enum": ["60", "90", "120"]
+        },
+        "lastBoostTime": {
+          "type": "string",
+          "description": "Timestamp string of last boost"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO creation time"
+        }
+      },
+      "required": ["name", "deviceId", "isPro"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Submitted payment transaction proof for pro subscription",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "User Auth UID who submitted the payment",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Sender name",
+          "maxLength": 64
+        },
+        "packageName": {
+          "type": "string",
+          "description": "Subscribed package name",
+          "maxLength": 64
+        },
+        "amount": {
+          "type": "number",
+          "description": "Payment amount in PKR or USD"
+        },
+        "method": {
+          "type": "string",
+          "description": "Payment gateway method",
+          "enum": ["jazzcash", "easypaisa", "binance"]
+        },
+        "tid": {
+          "type": "string",
+          "description": "Transaction ID from receipt",
+          "maxLength": 64
+        },
+        "screenshotUrl": {
+          "type": "string",
+          "description": "Screenshot URL or base64 data"
+        },
+        "status": {
+          "type": "string",
+          "description": "Verification status",
+          "enum": ["pending", "approved", "rejected"]
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Creation timestamp ms"
+        },
+        "reviewedAt": {
+          "type": "number",
+          "description": "Review timestamp ms"
+        }
+      },
+      "required": ["userId", "packageName", "amount", "method", "tid", "status"]
+    },
+    "AdminStats": {
+      "title": "AdminStats",
+      "description": "Global wallet and collection statistics",
+      "type": "object",
+      "properties": {
+        "totalEarnings": {
+          "type": "number",
+          "description": "Total earnings in PKR"
+        },
+        "todayEarnings": {
+          "type": "number",
+          "description": "Today's earnings in PKR"
+        },
+        "totalProUsers": {
+          "type": "number",
+          "description": "Total PRO users count"
+        }
+      },
+      "required": ["totalEarnings", "todayEarnings", "totalProUsers"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "User profiles and subscription state"
+    },
+    "/payments/{paymentId}": {
+      "schema": { "$ref": "Payment" },
+      "description": "All payment submissions and approval statuses"
+    },
+    "/admin/stats": {
+      "schema": { "$ref": "AdminStats" },
+      "description": "Aggregated wallet stats"
+    }
+  }
+}

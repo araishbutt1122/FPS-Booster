@@ -1,0 +1,6 @@
+{
+  "name": "FPS BOOSTER PRO 120",
+  "description": "Ultra dark blue neon gaming performance booster, FPS & graphics optimizer, background data blocker VPN firewall, and real-time gaming monitor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

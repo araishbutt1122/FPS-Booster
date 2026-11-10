@@ -1,0 +1,78 @@
+name: Build FPS Booster Pro APK & AAB
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Node Dependencies
+        run: npm ci || npm install
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Generate Release Keystore (if not provided)
+        run: |
+          mkdir -p android/app
+          if [ ! -f "android/app/keystore.jks" ]; then
+            keytool -genkeypair -v -keystore android/app/keystore.jks -alias fpsbooster -keyalg RSA -keysize 2048 -validity 10000 -storepass fpsbooster120 -keypass fpsbooster120 -dname "CN=FPS Booster, OU=Gaming, O=FPS Booster Pro, L=City, S=State, C=US"
+          fi
+
+      - name: Grant Execute Permission to Gradle Wrapper
+        run: |
+          if [ -f "android/gradlew" ]; then
+            chmod +x android/gradlew
+          else
+            gradle wrapper --gradle-version 8.5 --project-dir android
+            chmod +x android/gradlew
+          fi
+
+      - name: Build Android Release APK
+        working-directory: android
+        run: |
+          ./gradlew assembleRelease --stacktrace
+
+      - name: Build Android Release AAB (Google Play Store Bundle)
+        working-directory: android
+        run: |
+          ./gradlew bundleRelease --stacktrace
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FPS-Booster-v2.4-PRO-APK
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      - name: Upload Release AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FPS-Booster-v2.4-PRO-AAB
+          path: android/app/build/outputs/bundle/release/*.aab
+          retention-days: 30
