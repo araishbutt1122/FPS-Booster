@@ -31,21 +31,22 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
           cache: 'gradle'
-      - name: Generate Release Keystore (if not provided)
+
+      - name: Generate Release Keystore
         run: |
           mkdir -p android/app
           if [ ! -f "android/app/keystore.jks" ]; then
             keytool -genkey -v -keystore android/app/keystore.jks -alias key -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=FPS Booster, OU=Dev, O=FPS, L=Lahore, ST=Punjab, C=PK"
           fi
 
-          - name: Build APK
+      - name: Build APK
         run: |
           npx @capacitor/cli sync android
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease
 
-                - name: Build AAB
+      - name: Build AAB
         run: |
           cd android
           chmod +x gradlew
