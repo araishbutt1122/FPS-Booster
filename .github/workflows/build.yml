@@ -31,10 +31,6 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
           cache: 'gradle'
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Generate Release Keystore (if not provided)
         run: |
           mkdir -p android/app
