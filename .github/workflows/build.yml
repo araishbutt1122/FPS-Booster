@@ -24,12 +24,9 @@ jobs:
           npx cap add android
       - run: npm run build
       - run: npx cap sync android
-      - name: Fix Duplicate Kotlin - Real Fix
+      - name: Fix Duplicate Kotlin
         run: |
-          python3 << 'PYEOF'
-          p = 'android/app/build.gradle'
-          t = open(p).read()
-          fix = """
+          cat >> android/app/build.gradle << 'EOF'
           configurations.all {
               resolutionStrategy {
                   force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
@@ -37,37 +34,18 @@ jobs:
                   force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
               }
           }
-          """
-          if 'resolutionStrategy' not in t:
-              t = fix + "\n" + t
-              open(p,'w').write(t)
-              print('fixed app gradle')
-          p2 = 'android/build.gradle'
-          t2 = open(p2).read()
-          if 'resolutionStrategy' not in t2:
-              t2 = t2.replace('allprojects {', 'allprojects {\\n configurations.all { resolutionStrategy { force \\'org.jetbrains.kotlin:kotlin-stdlib:1.8.22\\' force \\'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22\\' } }')
-              open(p2,'w').write(t2)
-              print('fixed root gradle')
-          PYEOF
+          EOF
       - name: Setup Signing
         run: |
           keytool -genkey -v -keystore android/app/release.keystore -alias mykey -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=FPS, OU=Dev, O=FPS, L=Lahore, C=PK"
-          python3 -c "
-          p='android/app/build.gradle'
-          t=open(p).read()
-          t=t.replace('android {', '''android {
-              signingConfigs {
-                  release {
-                      storeFile file('release.keystore')
-                      storePassword '123456'
-                      keyAlias 'mykey'
-                      keyPassword '123456'
-                  }
-              }''')
-          t=t.replace('buildTypes {', 'buildTypes { release { signingConfig signingConfigs.release }')
+          python3 << 'PYEOF'
+          p = 'android/app/build.gradle'
+          t = open(p).read()
+          t = t.replace('android {', "android {\n    signingConfigs {\n        release {\n            storeFile file('release.keystore')\n            storePassword '123456'\n            keyAlias 'mykey'\n            keyPassword '123456'\n        }\n    }")
+          t = t.replace('buildTypes {', 'buildTypes { release { signingConfig signingConfigs.release }')
           open(p,'w').write(t)
           print('signing fixed')
-          "
+          PYEOF
       - run: |
           chmod +x android/gradlew
           cd android
