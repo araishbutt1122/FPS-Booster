@@ -3,60 +3,51 @@ name: Build FPS Booster Pro APK & AAB
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Checkout Source Code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install Node Dependencies
-        run: npm install --legacy-peer-deps
-
-      - name: Install Capacitor Android
-        run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
-          rm -rf android
-          npx @capacitor/cli add android
-
-      - name: Build Web Application
-        run: npm run build
-
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
 
-      - name: Generate Release Keystore
-        run: |
-          mkdir -p android/app
-          if [ ! -f "android/app/keystore.jks" ]; then
-            keytool -genkey -v -keystore android/app/keystore.jks -alias key -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=FPS Booster, OU=Dev, O=FPS, L=Lahore, ST=Punjab, C=PK"
-          fi
+      - name: Install Deps
+        run: npm install --legacy-peer-deps
 
-      - name: Build APK
+      - name: Add Android
         run: |
-          npx @capacitor/cli sync android
-          ls android/
+          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
+          rm -rf android
+          npx cap add android
+
+      - name: Build Web
+        run: npm run build
+
+      - name: Sync Android
+        run: npx cap sync android
+
+      - name: Make Keystore
+        run: |
+          keytool -genkey -v -keystore android/app/keystore.jks -alias key -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=FPS, OU=Dev, O=FPS, L=Lahore, ST=Punjab, C=PK"
+
+      - name: Build APK & AAB
+        run: |
           chmod +x android/gradlew
           cd android
-          ./gradlew assembleRelease
-
-      - name: Build AAB
-        run: |
-          cd android
-          ./gradlew bundleRelease
+          ./gradlew assembleRelease bundleRelease --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
