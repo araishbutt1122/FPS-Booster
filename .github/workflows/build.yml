@@ -24,17 +24,31 @@ jobs:
           npx cap add android
       - run: npm run build
       - run: npx cap sync android
-      - name: Fix Duplicate Kotlin
+      - name: Fix Duplicate Kotlin - Real Fix
         run: |
-          python3 -c "
-          p='android/variables.gradle'
-          t=open(p).read()
-          import re
-          t=re.sub(r\"kotlinVersion = '.*?'\", \"kotlinVersion = '1.9.20'\", t)
-          open(p,'w').write(t)
-          print('kotlin fixed')
-          "
-          cat android/variables.gradle
+          python3 << 'PYEOF'
+          p = 'android/app/build.gradle'
+          t = open(p).read()
+          fix = """
+          configurations.all {
+              resolutionStrategy {
+                  force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
+                  force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
+                  force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+              }
+          }
+          """
+          if 'resolutionStrategy' not in t:
+              t = fix + "\n" + t
+              open(p,'w').write(t)
+              print('fixed app gradle')
+          p2 = 'android/build.gradle'
+          t2 = open(p2).read()
+          if 'resolutionStrategy' not in t2:
+              t2 = t2.replace('allprojects {', 'allprojects {\\n configurations.all { resolutionStrategy { force \\'org.jetbrains.kotlin:kotlin-stdlib:1.8.22\\' force \\'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22\\' } }')
+              open(p2,'w').write(t2)
+              print('fixed root gradle')
+          PYEOF
       - name: Setup Signing
         run: |
           keytool -genkey -v -keystore android/app/release.keystore -alias mykey -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=FPS, OU=Dev, O=FPS, L=Lahore, C=PK"
