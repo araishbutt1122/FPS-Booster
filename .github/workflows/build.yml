@@ -32,7 +32,7 @@ jobs:
           accept-android-sdk-licenses: true
 
       - name: Install Dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Build Web App
         run: npm run build
