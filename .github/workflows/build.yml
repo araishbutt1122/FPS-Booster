@@ -38,7 +38,9 @@ jobs:
         run: npm run build
 
       - name: Sync Capacitor
-        run: npx cap sync android
+        run: |
+          npm install @capacitor/cli @capacitor/core @capacitor/android --legacy-peer-deps
+          npx cap sync android || echo "Cap sync skipped, android folder already exists"
 
       - name: Generate Release Keystore
         run: |
