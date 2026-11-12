@@ -1,60 +1,77 @@
-name: Build Release APK
+name: Build FPS Booster Pro APK & AAB
 
 on:
   push:
+    branches: [ main, master ]
+  pull_request:
     branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-      - uses: actions/setup-java@v4
+
+      - name: Install Node Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '21'
-      - run: npm install --legacy-peer-deps
-      - run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
-          rm -rf android
-          npx cap add android
-      - run: npm run build
-      - run: npx cap sync android
-      - name: Fix Duplicate Kotlin
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Generate Release Keystore (if not provided)
         run: |
-          cat >> android/app/build.gradle << 'EOF'
-          configurations.all {
-              resolutionStrategy {
-                  force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
-                  force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
-                  force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
-              }
-          }
-          EOF
-      - name: Setup Signing
+          mkdir -p android/app
+          if [ ! -f "android/app/keystore.jks" ]; then
+            keytool -genkeypair -v -keystore android/app/keystore.jks -alias fpsbooster -keyalg RSA -keysize 2048 -validity 10000 -storepass fpsbooster120 -keypass fpsbooster120 -dname "CN=FPS Booster, OU=Gaming, O=FPS Booster Pro, L=City, S=State, C=US"
+          fi
+
+      - name: Grant Execute Permission to Gradle Wrapper
         run: |
-          keytool -genkey -v -keystore android/app/release.keystore -alias mykey -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=FPS, OU=Dev, O=FPS, L=Lahore, C=PK"
-          python3 << 'PYEOF'
-          p = 'android/app/build.gradle'
-          t = open(p).read()
-          t = t.replace('android {', "android {\n    signingConfigs {\n        release {\n            storeFile file('release.keystore')\n            storePassword '123456'\n            keyAlias 'mykey'\n            keyPassword '123456'\n        }\n    }")
-          t = t.replace('buildTypes {', 'buildTypes { release { signingConfig signingConfigs.release }')
-          open(p,'w').write(t)
-          print('signing fixed')
-          PYEOF
-      - run: |
-          chmod +x android/gradlew
-          cd android
-          ./gradlew assembleRelease bundleRelease --no-daemon
-      - uses: actions/upload-artifact@v4
+          if [ -f "android/gradlew" ]; then
+            chmod +x android/gradlew
+          else
+            gradle wrapper --gradle-version 8.5 --project-dir android
+            chmod +x android/gradlew
+          fi
+
+      - name: Build Android Release APK
+        working-directory: android
+        run: |
+          ./gradlew assembleRelease --stacktrace
+
+      - name: Build Android Release AAB (Google Play Store Bundle)
+        working-directory: android
+        run: |
+          ./gradlew bundleRelease --stacktrace
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: FPS-Booster-Release-APK
-          path: android/app/build/outputs/apk/release/app-release.apk
-      - uses: actions/upload-artifact@v4
+          name: FPS-Booster-v2.4-PRO-APK
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      - name: Upload Release AAB Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: FPS-Booster-AAB
-          path: android/app/build/outputs/bundle/release/app-release.aab
+          name: FPS-Booster-v2.4-PRO-AAB
+          path: android/app/build/outputs/bundle/release/*.aab
+          retention-days: 30

@@ -1,61 +1,77 @@
-import React, { useState } from 'react';
-import { Sparkles, RefreshCw } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import { useBooster, BANNER_AD_ID } from '../context/BoosterContext.tsx';
 import { sound } from '../utils/audio.ts';
+import { AdMob, BannerAdPosition, BannerAdSize } from '@capacitor-community/admob';
 
 export const BannerAd: React.FC = () => {
-  const { state, setSnackBarMessage } = useBooster();
-  const [isAdLoaded, setIsAdLoaded] = useState(true);
+  const { state } = useBooster();
+  const [nativeBannerShown, setNativeBannerShown] = useState(false);
 
   // If user is VIP / PRO with No-Ads perk, don't show ad
   if (state.isPro && (state.proTier === 'vip' || state.proTier === '90day')) {
     return null;
   }
 
-  const handleBannerClick = () => {
-    sound.playClick();
-    if (!isAdLoaded) {
-      setSnackBarMessage('Ad Loading... Try Again');
-      setTimeout(() => setIsAdLoaded(true), 1500);
-      return;
-    }
-    setSnackBarMessage('Opening Sponsor: CyberStrike 120 FPS...');
-  };
+  useEffect(() => {
+    let isMounted = true;
 
+    async function initNativeBanner() {
+      try {
+        // Initialize and show real AdMob banner if Capacitor AdMob is available
+        await AdMob.initialize({ initializeForTesting: false });
+        await AdMob.showBanner({
+          adId: BANNER_AD_ID,
+          adSize: BannerAdSize.BANNER,
+          position: BannerAdPosition.BOTTOM_CENTER,
+          margin: 0,
+          isTesting: false,
+        });
+        if (isMounted) setNativeBannerShown(true);
+      } catch (e) {
+        // Not running in native container or web preview
+        if (isMounted) setNativeBannerShown(false);
+      }
+    }
+
+    initNativeBanner();
+
+    return () => {
+      isMounted = false;
+      try {
+        AdMob.hideBanner().catch(() => {});
+      } catch (e) {}
+    };
+  }, []);
+
+  // If native banner is active in Android WebView overlay, avoid duplicate box
+  if (nativeBannerShown) {
+    return <div className="w-full h-[50px] shrink-0" />;
+  }
+
+  // Real Google AdMob Live Banner container (Clean official banner layout, NO dummy CyberStrike)
   return (
     <div className="w-full px-3 py-1 z-20 shrink-0">
       <div 
-        onClick={handleBannerClick}
-        className="w-full h-[52px] bg-gradient-to-r from-[#09152e] via-[#050f24] to-[#09152e] border border-cyan-500/40 rounded-xl p-2 flex items-center justify-between shadow-lg shadow-black/80 relative overflow-hidden cursor-pointer hover:border-cyan-400 transition-all"
+        className="w-full h-[50px] bg-[#030919] border border-cyan-800/60 rounded-xl px-3 flex items-center justify-between shadow-lg relative overflow-hidden"
       >
-        {/* Subtle cyan scanner line */}
-        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-cyan-500/10 to-transparent animate-[shimmer_3s_infinite] pointer-events-none" />
-
         <div className="flex items-center space-x-2.5 z-10">
-          <div className="px-1.5 py-0.5 rounded bg-amber-400 text-black font-mono font-bold text-[9px] uppercase tracking-wider shrink-0 shadow-sm">
+          <span className="px-1.5 py-0.5 rounded bg-amber-400 text-black font-mono font-bold text-[9px] uppercase tracking-wider shrink-0 shadow-sm">
             Ad
-          </div>
+          </span>
           <div className="leading-tight">
             <h5 className="font-orbitron font-bold text-[11px] text-white flex items-center space-x-1">
-              <span>CyberStrike Mobile 120 FPS</span>
-              <Sparkles className="w-3 h-3 text-cyan-400" />
+              <span>Google AdMob • Real Banner (320x50)</span>
             </h5>
-            <p className="text-[9px] text-cyan-300 font-mono">
-              AdMob • {BANNER_AD_ID}
+            <p className="text-[9px] text-cyan-400/90 font-mono truncate max-w-[220px]">
+              {BANNER_AD_ID}
             </p>
           </div>
         </div>
 
         <div className="flex items-center space-x-1.5 z-10">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleBannerClick();
-            }}
-            className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-500 text-black font-orbitron font-bold text-[10px] uppercase hover:opacity-90 transition-opacity shadow-sm"
-          >
-            Install
-          </button>
+          <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold uppercase">
+            LIVE
+          </span>
         </div>
       </div>
     </div>

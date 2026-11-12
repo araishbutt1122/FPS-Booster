@@ -31,8 +31,18 @@ export const RewardAdScreen: React.FC = () => {
   const [isPlayingAd, setIsPlayingAd] = useState(false);
   const [currentAdStep, setCurrentAdStep] = useState(1);
 
-  const handleStartAd = () => {
+  const handleStartAd = async () => {
     sound.playClick();
+    const type = selectedOption.id === 'ad_10m' ? '10m' : 
+                 selectedOption.id === 'ad_30m' ? '30m' : 
+                 selectedOption.id === 'ad_60m' ? '60m' : '120m';
+
+    if (typeof (window as any).showRewardedAd === 'function') {
+      const res = await (window as any).showRewardedAd(type);
+      if (res && res.success) {
+        return;
+      }
+    }
     setCurrentAdStep(1);
     setIsPlayingAd(true);
   };

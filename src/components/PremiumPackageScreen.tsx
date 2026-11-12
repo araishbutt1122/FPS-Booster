@@ -144,24 +144,29 @@ export const PremiumPackageScreen: React.FC = () => {
         <h2 className="font-orbitron font-black text-xl text-white mt-2 text-center">
           Upgrade to Pro
         </h2>
-        <p className="text-xs text-amber-300 font-semibold tracking-wide">
+        {/* FIX 3 - UPAR BEST OFFER WALA ATTRACTIVE TEXT */}
+        <div className="mt-1.5 px-3 py-1.5 rounded-2xl bg-gradient-to-r from-red-600/30 via-amber-500/30 to-red-600/30 border border-amber-400/70 text-amber-300 text-xs font-bold text-center flex items-center justify-center space-x-1.5 shadow-lg shadow-amber-500/20">
+          <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0 animate-pulse" />
+          <span>🔥 BEST OFFER - LIMITED TIME! 50+ Players Roz Buy Kar Rahe Hain!</span>
+        </div>
+        <p className="text-[11px] text-slate-400 font-semibold tracking-wide mt-1">
           Unlock All Features • Play at 120 FPS
         </p>
       </div>
 
-      {/* Package Selector Cards */}
+      {/* FIX 1 - 5 PACKAGES (IN ORDER UPAR SE NEECHE - ALL CLICKABLE) */}
       <div className="space-y-2.5">
         <div className="flex items-center justify-between text-xs px-1">
           <span className="font-orbitron font-bold text-slate-300 uppercase tracking-wider">
-            1. Select Your Package
+            1. Select Your Package (5 Available)
           </span>
-          <span className="text-[10px] text-amber-400 font-mono">
-            Tap to Choose
+          <span className="text-[10px] text-amber-400 font-mono font-bold">
+            Tap to Select &amp; Update Price
           </span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          {packages.slice(0, 3).map((pkg) => {
+        <div className="space-y-2">
+          {packages.map((pkg) => {
             const isSelected = selectedPkg.id === pkg.id;
             return (
               <div
@@ -170,28 +175,67 @@ export const PremiumPackageScreen: React.FC = () => {
                   sound.playClick();
                   setSelectedPkg(pkg);
                 }}
-                className={`rounded-2xl p-3 border transition-all cursor-pointer relative ${
+                className={`rounded-2xl p-3 border-2 transition-all cursor-pointer relative overflow-hidden ${
                   isSelected
-                    ? 'bg-gradient-to-br from-[#0c1c3d] to-[#040e24] border-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.4)]'
-                    : 'bg-[#071129]/80 border-cyan-900/50 hover:border-cyan-700/60'
+                    ? 'bg-gradient-to-r from-[#0d224d] via-[#091b3e] to-[#051128] border-amber-400 shadow-[0_0_20px_rgba(251,191,36,0.45)] ring-1 ring-amber-400'
+                    : 'bg-[#071129]/90 border-cyan-900/50 hover:border-cyan-700/70 hover:bg-[#091636]'
                 }`}
               >
                 {pkg.badge && (
-                  <span className="absolute -top-2 right-2 text-[8px] font-orbitron font-bold px-1.5 py-0.2 rounded-full bg-amber-400 text-black">
+                  <span className={`absolute top-2 right-2 text-[9px] font-orbitron font-extrabold px-2 py-0.5 rounded-full shadow-md ${
+                    pkg.id === 'pkg_7d'
+                      ? 'bg-gradient-to-r from-amber-400 to-yellow-300 text-black animate-pulse'
+                      : pkg.id === 'pkg_30d'
+                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                      : pkg.id === 'pkg_15d'
+                      ? 'bg-cyan-400 text-black'
+                      : pkg.id === 'pkg_3d'
+                      ? 'bg-red-500 text-white'
+                      : 'bg-emerald-400 text-black'
+                  }`}>
                     {pkg.badge}
                   </span>
                 )}
-                <div className="flex items-center justify-between">
-                  <h4 className="font-orbitron font-bold text-xs text-white">
-                    {pkg.name}
-                  </h4>
-                  <span className="font-orbitron font-extrabold text-sm text-amber-300">
-                    Rs. {pkg.pricePkr}
-                  </span>
+                <div className="flex items-center space-x-3">
+                  {/* Selection Radio Indicator */}
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
+                    isSelected ? 'border-amber-400 bg-amber-400 text-black' : 'border-slate-600 bg-slate-900'
+                  }`}>
+                    {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                  </div>
+
+                  <div className="flex-1 pr-16 sm:pr-0">
+                    <div className="flex items-center space-x-2">
+                      <h4 className="font-orbitron font-bold text-sm text-white">
+                        {pkg.name}
+                      </h4>
+                      {pkg.isPopular && (
+                        <span className="text-[8px] font-mono px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-bold">
+                          POPULAR
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-300 font-medium mt-0.5">
+                      {pkg.durationLabel}
+                    </p>
+                    {pkg.perks && pkg.perks.length > 0 && (
+                      <p className="text-[10px] text-cyan-400/90 font-mono mt-0.5 line-clamp-1">
+                        ✓ {pkg.perks.join(' • ')}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="text-right">
+                    <span className="font-orbitron font-black text-base text-amber-300 block">
+                      Rs. {pkg.pricePkr}
+                    </span>
+                    {pkg.originalPricePkr && (
+                      <span className="text-[10px] text-slate-500 line-through font-mono">
+                        Rs. {pkg.originalPricePkr}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-0.5">
-                  {pkg.durationLabel}
-                </p>
               </div>
             );
           })}
@@ -207,7 +251,7 @@ export const PremiumPackageScreen: React.FC = () => {
               <Zap className="w-4 h-4 text-amber-400" />
               <span>PRO PAYMENT VERIFICATION</span>
             </h3>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-500/40 font-bold">
+            <span className="text-xs font-mono px-2.5 py-1 rounded bg-amber-400/20 text-amber-300 border border-amber-500/50 font-black">
               Rs. {selectedPkg.pricePkr}
             </span>
           </div>
@@ -217,7 +261,7 @@ export const PremiumPackageScreen: React.FC = () => {
           </div>
         </div>
 
-        {/* 1. Payment Method Tabs (JazzCash, Easypaisa, Binance Pay) */}
+        {/* 1. Payment Method Tabs (JazzCash, Easypaisa, Binance Pay) - SAME SIZE, SAME HEIGHT, SAME DESIGN */}
         <div className="space-y-1.5">
           <label className="text-[10px] text-slate-300 font-bold font-orbitron uppercase tracking-wider block">
             2. Choose Payment Method
@@ -227,7 +271,7 @@ export const PremiumPackageScreen: React.FC = () => {
             <button
               type="button"
               onClick={() => { sound.playClick(); setSelectedMethod('jazzcash'); }}
-              className={`py-2.5 px-2 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative overflow-hidden ${
+              className={`py-2 px-1.5 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative overflow-hidden h-[106px] ${
                 selectedMethod === 'jazzcash'
                   ? 'bg-gradient-to-b from-[#2a0608] to-[#120203] border-red-500 shadow-[0_0_16px_rgba(239,68,68,0.6)] ring-1 ring-red-400'
                   : 'bg-[#040e24] border-slate-800 hover:border-red-900/60'
@@ -244,7 +288,7 @@ export const PremiumPackageScreen: React.FC = () => {
             <button
               type="button"
               onClick={() => { sound.playClick(); setSelectedMethod('easypaisa'); }}
-              className={`py-2.5 px-2 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative overflow-hidden ${
+              className={`py-2 px-1.5 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative overflow-hidden h-[106px] ${
                 selectedMethod === 'easypaisa'
                   ? 'bg-gradient-to-b from-[#022115] to-[#01110a] border-emerald-500 shadow-[0_0_16px_rgba(16,185,129,0.6)] ring-1 ring-emerald-400'
                   : 'bg-[#040e24] border-slate-800 hover:border-emerald-900/60'
@@ -261,7 +305,7 @@ export const PremiumPackageScreen: React.FC = () => {
             <button
               type="button"
               onClick={() => { sound.playClick(); setSelectedMethod('binance'); }}
-              className={`py-2.5 px-2 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative overflow-hidden ${
+              className={`py-2 px-1.5 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative overflow-hidden h-[106px] ${
                 selectedMethod === 'binance'
                   ? 'bg-gradient-to-b from-[#2a2205] to-[#120e01] border-yellow-500 shadow-[0_0_16px_rgba(234,179,8,0.6)] ring-1 ring-yellow-400'
                   : 'bg-[#040e24] border-slate-800 hover:border-yellow-900/60'
@@ -271,7 +315,7 @@ export const PremiumPackageScreen: React.FC = () => {
                 <BinanceLogo size="md" />
               </div>
               <span className="text-[11px] font-bold font-orbitron text-white">Binance Pay</span>
-              <span className="text-[9px] text-yellow-400 font-mono font-semibold">Pay ID</span>
+              <span className="text-[9px] text-yellow-400 font-mono font-semibold">Official App</span>
             </button>
           </div>
         </div>
@@ -507,6 +551,72 @@ export const PremiumPackageScreen: React.FC = () => {
             )}
           </button>
         </form>
+      </div>
+
+      {/* FIX 4 - LIVE LEADERBOARD (SEPARATE BOX BELOW PAYMENT FORM) */}
+      <div className="p-4 rounded-3xl bg-gradient-to-br from-[#071333] via-[#05112e] to-[#030919] border-2 border-cyan-500/50 shadow-2xl shadow-cyan-950/80 space-y-3">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-cyan-900/60 pb-2.5">
+          <div className="flex items-center space-x-2">
+            <span className="text-base select-none">🏆</span>
+            <h3 className="font-orbitron font-black text-xs sm:text-sm text-amber-300 tracking-wide">
+              LIVE LEADERBOARD - AAJ KE TOP BUYERS
+            </h3>
+          </div>
+          <div className="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-[10px] text-emerald-300 font-mono font-bold">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <span>LIVE</span>
+          </div>
+        </div>
+
+        {/* Buyers List */}
+        <div className="space-y-2">
+          {[
+            { name: 'Ahmed K.', package: '30 Days', timeAgo: '2 min pehle', badge: '👑 VIP' },
+            { name: 'Usman R.', package: '7 Days', timeAgo: '5 min pehle', badge: '⭐ Popular' },
+            { name: 'Ali H.', package: '7 Days', timeAgo: '9 min pehle', badge: '⭐ Popular' },
+            { name: 'Hamza S.', package: '30 Days', timeAgo: '12 min pehle', badge: '👑 VIP' },
+            { name: 'Bilal M.', package: '1 Day', timeAgo: '15 min pehle', badge: '⚡ Quick' },
+            { name: 'Zain A.', package: '15 Days', timeAgo: '21 min pehle', badge: '💎 Super' },
+          ].map((buyer, idx) => (
+            <div 
+              key={idx}
+              className="flex items-center justify-between p-2.5 rounded-2xl bg-[#040e24]/90 border border-cyan-900/60 hover:border-cyan-600/70 transition-all text-xs"
+            >
+              <div className="flex items-center space-x-2.5">
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center font-orbitron font-extrabold text-[10px] shadow-sm ${
+                  idx === 0 ? 'bg-amber-400 text-black shadow-amber-400/50' :
+                  idx === 1 ? 'bg-slate-300 text-black' :
+                  idx === 2 ? 'bg-amber-700 text-white' :
+                  'bg-slate-800 text-slate-400'
+                }`}>
+                  #{idx + 1}
+                </span>
+                <div>
+                  <div className="font-bold text-white flex items-center space-x-1.5">
+                    <span>{buyer.name}</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-orbitron font-bold">
+                      {buyer.package}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono">{buyer.timeAgo}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 text-[10px] font-bold shadow-sm shadow-emerald-500/20">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Verified</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="pt-2 text-center border-t border-cyan-950/80">
+          <p className="text-[11px] font-mono font-extrabold text-amber-300 tracking-wide animate-pulse">
+            🔥 +45 aur players ne aaj PRO liya hai
+          </p>
+        </div>
       </div>
     </div>
   );

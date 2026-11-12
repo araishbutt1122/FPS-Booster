@@ -148,8 +148,15 @@ export const HomeScreen: React.FC = () => {
   };
 
   // Direct Ad Earn Trigger from 4 Cards or Quick Ad Card
-  const startDirectAdTask = (minutes: number, adsNeeded: number, label: string) => {
+  const startDirectAdTask = async (minutes: number, adsNeeded: number, label: string) => {
     sound.playClick();
+    const type = minutes <= 10 ? '10m' : minutes <= 30 ? '30m' : minutes <= 60 ? '60m' : '120m';
+    if (typeof (window as any).showRewardedAd === 'function') {
+      const res = await (window as any).showRewardedAd(type);
+      if (res && res.success) {
+        return;
+      }
+    }
     setActiveAdTask({
       label,
       durationMinutes: minutes,
@@ -561,11 +568,11 @@ export const HomeScreen: React.FC = () => {
             </span>
           </div>
 
-          <div className="grid grid-cols-4 gap-2 text-center">
+          <div className="grid grid-cols-5 gap-1.5 text-center">
             {/* FPS */}
-            <div className="bg-[#050b1a] p-2 rounded-xl border border-cyan-950">
-              <span className="text-[10px] text-slate-400 block font-mono">FPS</span>
-              <span className="font-orbitron font-extrabold text-base text-cyan-300 drop-shadow-[0_0_6px_rgba(6,182,212,0.8)]">
+            <div className="bg-[#050b1a] p-1.5 rounded-xl border border-cyan-950">
+              <span className="text-[9px] text-slate-400 block font-mono">FPS</span>
+              <span id="fps" className="font-orbitron font-extrabold text-sm text-cyan-300 drop-shadow-[0_0_6px_rgba(6,182,212,0.8)]">
                 {state.currentFps}
               </span>
             </div>
@@ -573,31 +580,39 @@ export const HomeScreen: React.FC = () => {
             {/* RAM */}
             <div 
               onClick={cleanRam} 
-              className="bg-[#050b1a] p-2 rounded-xl border border-cyan-950 cursor-pointer hover:border-emerald-500/50 transition-colors"
+              className="bg-[#050b1a] p-1.5 rounded-xl border border-cyan-950 cursor-pointer hover:border-emerald-500/50 transition-colors"
               title="Tap to Clean RAM"
             >
               <div className="flex items-center justify-center space-x-0.5">
-                <span className="text-[10px] text-slate-400 font-mono">RAM</span>
-                <RotateCcw className="w-2.5 h-2.5 text-emerald-400" />
+                <span className="text-[9px] text-slate-400 font-mono">RAM</span>
+                <RotateCcw className="w-2 h-2 text-emerald-400" />
               </div>
-              <span className="font-orbitron font-extrabold text-base text-emerald-400">
+              <span id="ram" className="font-orbitron font-extrabold text-xs text-emerald-400 block truncate">
                 {state.ramUsedGb} GB
               </span>
-              <span className="text-[8px] text-slate-500 block -mt-0.5">{state.ramUsagePercent}%</span>
+              <span id="ramPercent" className="text-[8px] text-slate-500 block -mt-0.5">{state.ramUsagePercent}%</span>
             </div>
 
             {/* Temp */}
-            <div className="bg-[#050b1a] p-2 rounded-xl border border-cyan-950">
-              <span className="text-[10px] text-slate-400 block font-mono">TEMP</span>
-              <span className="font-orbitron font-extrabold text-base text-amber-400">
+            <div className="bg-[#050b1a] p-1.5 rounded-xl border border-cyan-950">
+              <span className="text-[9px] text-slate-400 block font-mono">TEMP</span>
+              <span id="temp" className="font-orbitron font-extrabold text-xs text-amber-400 block">
                 {state.temperatureC}°C
               </span>
             </div>
 
+            {/* Battery */}
+            <div className="bg-[#050b1a] p-1.5 rounded-xl border border-cyan-950">
+              <span className="text-[9px] text-slate-400 block font-mono">BATTERY</span>
+              <span id="battery" className="font-orbitron font-extrabold text-xs text-emerald-300 block">
+                {state.batteryLevel ?? 88}%
+              </span>
+            </div>
+
             {/* Ping */}
-            <div className="bg-[#050b1a] p-2 rounded-xl border border-cyan-950">
-              <span className="text-[10px] text-slate-400 block font-mono">PING</span>
-              <span className="font-orbitron font-extrabold text-base text-cyan-400">
+            <div className="bg-[#050b1a] p-1.5 rounded-xl border border-cyan-950">
+              <span className="text-[9px] text-slate-400 block font-mono">PING</span>
+              <span className="font-orbitron font-extrabold text-xs text-cyan-400 block">
                 {state.pingMs}ms
               </span>
             </div>

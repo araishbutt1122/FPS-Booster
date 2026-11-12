@@ -109,6 +109,8 @@ export interface BoosterState {
   ramUsedGb: number;
   totalRamGb: number;
   temperatureC: number;
+  batteryLevel: number;
+  isBatteryCharging?: boolean;
   pingMs: number;
   isBoosting: boolean;
   boostTimeRemainingSec: number;

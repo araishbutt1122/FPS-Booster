@@ -325,9 +325,11 @@ export const GamingDashboard: React.FC = () => {
             <span className="text-[10px] text-slate-400 font-mono block">DEVICE TEMP</span>
             <div className="flex items-baseline space-x-1 mt-0.5">
               <span className="font-orbitron font-extrabold text-2xl text-amber-400">
-                34°C
+                {state.temperatureC}°C
               </span>
-              <span className="text-[10px] text-emerald-400 font-mono">Optimal</span>
+              <span className="text-[10px] text-emerald-400 font-mono">
+                {state.batteryLevel ? `${state.batteryLevel}% Bat` : 'Optimal'}
+              </span>
             </div>
             <span className="text-[10px] text-slate-400 font-mono block mt-1">
               Cooling Governor ON

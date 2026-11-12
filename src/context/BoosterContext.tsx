@@ -27,10 +27,12 @@ import {
 } from '../utils/firebase.ts';
 import { scanScreenshotForTid } from '../utils/ocr.ts';
 import { collection, doc, onSnapshot } from 'firebase/firestore';
+import { updateRealStats } from '../app.js';
 
 // REAL ADMOB UNIT IDS (EXACTLY AS REQUESTED - NO TEST IDS)
-export const REWARDED_AD_ID = 'ca-app-pub-8318388001860392/1180265351';
-export const BANNER_AD_ID = 'ca-app-pub-8318388001860392/6739888800';
+export const BANNER_AD_ID = 'ca-app-pub-8318388001860392/2099191820';
+export const REWARDED_AD_ID = 'ca-app-pub-8318388001860392/6700927605';
+export const APP_OPEN_AD_ID = 'ca-app-pub-8318388001860392/8289341446';
 
 // STRICT ONLY 3 PAYMENT DETAILS (AS REQUESTED)
 export const JAZZCASH_NUMBER = '03193191407';
@@ -116,17 +118,17 @@ const INITIAL_DATA_HUNGRY_APPS: AppBlockItem[] = [
   { id: 'app_12', name: 'ShareIt', packageName: 'com.lenovo.anyshare.gps', category: 'Utility', isBlocked: true, blockedDataMb: 72.3, iconName: 'shareit' },
   { id: 'app_13', name: 'X (Twitter)', packageName: 'com.twitter.android', category: 'Social', isBlocked: true, blockedDataMb: 68.9, iconName: 'twitter' },
   { id: 'app_14', name: 'Threads', packageName: 'com.instagram.barcelona', category: 'Social', isBlocked: true, blockedDataMb: 62.4, iconName: 'threads' },
-  { id: 'app_15', name: 'Telegram', packageName: 'org.telegram.messenger', category: 'Chat', isBlocked: false, blockedDataMb: 58.4, iconName: 'telegram' },
-  { id: 'app_16', name: 'Google Photos', packageName: 'com.google.android.apps.photos', category: 'Cloud', isBlocked: false, blockedDataMb: 54.2, iconName: 'photos' },
-  { id: 'app_17', name: 'Google Play Store', packageName: 'com.android.vending', category: 'System', isBlocked: false, blockedDataMb: 49.5, iconName: 'play store' },
-  { id: 'app_18', name: 'Google Play Services', packageName: 'com.google.android.gms', category: 'System', isBlocked: false, blockedDataMb: 45.1, iconName: 'play services' },
-  { id: 'app_19', name: 'Google Maps', packageName: 'com.google.android.apps.maps', category: 'Navigation', isBlocked: false, blockedDataMb: 41.8, iconName: 'maps' },
-  { id: 'app_20', name: 'Pinterest', packageName: 'com.pinterest', category: 'Social', isBlocked: false, blockedDataMb: 38.6, iconName: 'pinterest' },
-  { id: 'app_21', name: 'Gmail', packageName: 'com.google.android.gm', category: 'Productivity', isBlocked: false, blockedDataMb: 34.2, iconName: 'gmail' },
-  { id: 'app_22', name: 'Google Drive', packageName: 'com.google.android.apps.docs', category: 'Cloud', isBlocked: false, blockedDataMb: 30.5, iconName: 'drive' },
-  { id: 'app_23', name: 'Snack Video', packageName: 'com.kwai.video', category: 'Video', isBlocked: false, blockedDataMb: 28.4, iconName: 'snack' },
-  { id: 'app_24', name: 'Likee', packageName: 'video.like', category: 'Video', isBlocked: false, blockedDataMb: 24.1, iconName: 'likee' },
-  { id: 'app_25', name: 'Helo', packageName: 'com.eterno.shortvideos', category: 'Social', isBlocked: false, blockedDataMb: 20.7, iconName: 'helo' },
+  { id: 'app_15', name: 'Telegram', packageName: 'org.telegram.messenger', category: 'Chat', isBlocked: true, blockedDataMb: 58.4, iconName: 'telegram' },
+  { id: 'app_16', name: 'Google Photos', packageName: 'com.google.android.apps.photos', category: 'Cloud', isBlocked: true, blockedDataMb: 54.2, iconName: 'photos' },
+  { id: 'app_17', name: 'Google Play Store', packageName: 'com.android.vending', category: 'System', isBlocked: true, blockedDataMb: 49.5, iconName: 'play store' },
+  { id: 'app_18', name: 'Google Play Services', packageName: 'com.google.android.gms', category: 'System', isBlocked: true, blockedDataMb: 45.1, iconName: 'play services' },
+  { id: 'app_19', name: 'Google Maps', packageName: 'com.google.android.apps.maps', category: 'Navigation', isBlocked: true, blockedDataMb: 41.8, iconName: 'maps' },
+  { id: 'app_20', name: 'Pinterest', packageName: 'com.pinterest', category: 'Social', isBlocked: true, blockedDataMb: 38.6, iconName: 'pinterest' },
+  { id: 'app_21', name: 'Gmail', packageName: 'com.google.android.gm', category: 'Productivity', isBlocked: true, blockedDataMb: 34.2, iconName: 'gmail' },
+  { id: 'app_22', name: 'Google Drive', packageName: 'com.google.android.apps.docs', category: 'Cloud', isBlocked: true, blockedDataMb: 30.5, iconName: 'drive' },
+  { id: 'app_23', name: 'Snack Video', packageName: 'com.kwai.video', category: 'Video', isBlocked: true, blockedDataMb: 28.4, iconName: 'snack' },
+  { id: 'app_24', name: 'Likee', packageName: 'video.like', category: 'Video', isBlocked: true, blockedDataMb: 24.1, iconName: 'likee' },
+  { id: 'app_25', name: 'Helo', packageName: 'com.eterno.shortvideos', category: 'Social', isBlocked: true, blockedDataMb: 20.7, iconName: 'helo' },
 ];
 
 const RAW_GAMES: GameItem[] = [
@@ -156,7 +158,16 @@ const PACKAGES: ProPackage[] = [
     durationDays: 1, 
     pricePkr: 80, 
     badge: 'Quick Boost', 
-    perks: ['120 FPS Unlocked', 'Background Data Blocker', 'RAM Cleaner'] 
+    perks: ['120 FPS Unlocked', 'Block VPN Firewall', 'RAM Cleaner'] 
+  },
+  { 
+    id: 'pkg_3d', 
+    name: 'PKG 3 Days', 
+    durationLabel: '3 Days Premium Access', 
+    durationDays: 3, 
+    pricePkr: 120, 
+    badge: '🔥 TRY KARO - SABSE SASTA', 
+    perks: ['120 FPS Extreme', 'Block VPN Firewall', 'RAM Cleaner', 'Zero Ping Engine'] 
   },
   { 
     id: 'pkg_7d', 
@@ -165,9 +176,19 @@ const PACKAGES: ProPackage[] = [
     durationDays: 7, 
     pricePkr: 200, 
     originalPricePkr: 400, 
-    badge: 'Most Popular', 
+    badge: '⭐ BEST VALUE - 80% LOG YAHI LETE HAIN', 
     isPopular: true, 
     perks: ['120 FPS Extreme', 'Full Graphics Optimization', 'Zero Ping Optimizer', 'Priority VPN Tunnel'] 
+  },
+  { 
+    id: 'pkg_15d', 
+    name: 'PKG 15 Days', 
+    durationLabel: '15 Days Premium Access', 
+    durationDays: 15, 
+    pricePkr: 320, 
+    originalPricePkr: 500, 
+    badge: '💎 SUPER DEAL', 
+    perks: ['15 Days VIP 120 FPS', 'Ultra Vulkan Render Cache', 'Zero Latency Mode', 'Esports Optimization'] 
   },
   { 
     id: 'pkg_30d', 
@@ -175,15 +196,10 @@ const PACKAGES: ProPackage[] = [
     durationLabel: '30 Days Premium', 
     durationDays: 30, 
     pricePkr: 450, 
+    originalPricePkr: 800, 
+    isVip: true, 
+    badge: '👑 VIP - SABSE ZYADA BACHAO', 
     perks: ['Unlimited 120 FPS', 'Ultra Vulkan Render Cache', 'No Lag Guarantee', '24/7 Gaming Support'] 
-  },
-  { 
-    id: 'pkg_monthly_499', 
-    name: 'Monthly Unlimited', 
-    durationLabel: 'Monthly VIP Access', 
-    durationDays: 30, 
-    pricePkr: 499, 
-    perks: ['All 120 FPS Games', 'Anti-Thermal Throttling', 'Full VPN Firewall', 'Auto Game Detector'] 
   },
   { 
     id: 'pkg_vip_599', 
@@ -303,10 +319,12 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       activeFps: '60',
       currentFps: 60,
       maxHardwareHz: 120,
-      ramUsagePercent: 68,
-      ramUsedGb: 2.8,
-      totalRamGb: 6.0,
-      temperatureC: 36,
+      ramUsagePercent: 54,
+      ramUsedGb: 2.2,
+      totalRamGb: 4.0,
+      temperatureC: 34.2,
+      batteryLevel: 88,
+      isBatteryCharging: false,
       pingMs: 28,
       isBoosting: false,
       boostTimeRemainingSec: 0,
@@ -455,6 +473,57 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }));
     });
     return unsub;
+  }, []);
+
+  // Listen to Real Hardware Stats from RealStatsPlugin / app.js
+  useEffect(() => {
+    updateRealStats();
+    const handleRealStats = (e: any) => {
+      const data = e.detail;
+      if (!data) return;
+      setState(prev => {
+        const nextRamUsed = data.ramUsed !== undefined ? parseFloat(data.ramUsed) : (data.ram?.used ? parseFloat(data.ram.used) : prev.ramUsedGb);
+        const nextRamTotal = data.ramTotal !== undefined ? parseFloat(data.ramTotal) : (data.ram?.total ? parseFloat(data.ram.total) : prev.totalRamGb);
+        const nextRamPercent = data.ramPercent !== undefined ? Number(data.ramPercent) : (data.ram?.percent !== undefined ? Number(data.ram.percent) : prev.ramUsagePercent);
+        const nextTemp = data.temp !== undefined ? parseFloat(data.temp) : (data.temp?.temp ? parseFloat(data.temp.temp) : prev.temperatureC);
+        const nextBattery = data.battery !== undefined ? Number(data.battery) : (data.temp?.battery !== undefined ? Number(data.temp.battery) : (prev.batteryLevel ?? 85));
+        const nextFps = data.fps !== undefined ? Number(data.fps) : prev.currentFps;
+
+        return {
+          ...prev,
+          ramUsedGb: isNaN(nextRamUsed) ? prev.ramUsedGb : nextRamUsed,
+          totalRamGb: isNaN(nextRamTotal) ? prev.totalRamGb : nextRamTotal,
+          ramUsagePercent: isNaN(nextRamPercent) ? prev.ramUsagePercent : nextRamPercent,
+          temperatureC: isNaN(nextTemp) ? prev.temperatureC : nextTemp,
+          batteryLevel: isNaN(nextBattery) ? prev.batteryLevel : nextBattery,
+          currentFps: isNaN(nextFps) ? prev.currentFps : nextFps,
+        };
+      });
+    };
+
+    window.addEventListener('fpsbooster_realstats', handleRealStats);
+
+    const handleRewardGranted = (e: any) => {
+      const data = e.detail;
+      if (data && data.durationMinutes) {
+        startRewardBoost(data.durationMinutes, data.targetFps || '120', data.label || 'Rewarded Boost');
+      }
+    };
+
+    const handleToast = (e: any) => {
+      if (e.detail?.message) {
+        setSnackBarMessage(e.detail.message);
+      }
+    };
+
+    window.addEventListener('fpsbooster_reward_granted', handleRewardGranted);
+    window.addEventListener('fpsbooster_toast', handleToast);
+
+    return () => {
+      window.removeEventListener('fpsbooster_realstats', handleRealStats);
+      window.removeEventListener('fpsbooster_reward_granted', handleRewardGranted);
+      window.removeEventListener('fpsbooster_toast', handleToast);
+    };
   }, []);
 
   // Real FPS calculation via Choreographer / requestAnimationFrame
