@@ -37,17 +37,23 @@ jobs:
       - name: Build Web App
         run: npm run build
 
-      - name: Sync Capacitor
+      - name: Setup Capacitor Android
         run: |
           npm install @capacitor/cli @capacitor/core @capacitor/android --legacy-peer-deps
-          npx cap sync android || echo "Cap sync skipped, android folder already exists"
+          if [ ! -d "android" ]; then
+            npx cap init "FPS Booster" com.fpsbooster.app --web-dir=dist || true
+            npx cap add android || true
+          fi
+          npx cap sync android || true
+          ls -la android/
 
       - name: Generate Release Keystore
         run: |
           keytool -genkey -v -keystore android/app/release.keystore -alias fpsbooster -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=FPS Booster, OU=Dev, O=FPS, L=Lahore, ST=Punjab, C=PK"
 
       - name: Grant Execute Permission to Gradle Wrapper
-        run: chmod +x android/gradlew
+        run: |
+          if [ -f "android/gradlew" ]; then chmod +x android/gradlew; else echo "gradlew not found"; ls -la android/; exit 1; fi
 
       - name: Build Android Release APK
         run: cd android && ./gradlew assembleRelease
