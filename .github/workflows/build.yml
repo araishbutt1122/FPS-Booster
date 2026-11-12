@@ -1,10 +1,8 @@
-name: Build FPS Booster Pro APK & AAB
+name: build
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -12,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Source Code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Setup Node.js 20
@@ -20,58 +18,49 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install Node Dependencies
-        run: npm install --legacy-peer-deps
-
-      - name: Build Web Application
-        run: npm run build
-
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          api-level: 34
+          build-tools: 34.0.0
+          cmdline-tools-version: 11.0
 
-      - name: Generate Release Keystore (if not provided)
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build Web App
+        run: npm run build
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Generate Release Keystore
         run: |
-          mkdir -p android/app
-          if [ ! -f "android/app/keystore.jks" ]; then
-            keytool -genkeypair -v -keystore android/app/keystore.jks -alias fpsbooster -keyalg RSA -keysize 2048 -validity 10000 -storepass fpsbooster120 -keypass fpsbooster120 -dname "CN=FPS Booster, OU=Gaming, O=FPS Booster Pro, L=City, S=State, C=US"
-          fi
+          keytool -genkey -v -keystore android/app/release.keystore -alias fpsbooster -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=FPS Booster, OU=Dev, O=FPS, L=Lahore, ST=Punjab, C=PK"
 
       - name: Grant Execute Permission to Gradle Wrapper
-        run: |
-          if [ -f "android/gradlew" ]; then
-            chmod +x android/gradlew
-          else
-            gradle wrapper --gradle-version 8.5 --project-dir android
-            chmod +x android/gradlew
-          fi
+        run: chmod +x android/gradlew
 
       - name: Build Android Release APK
-        working-directory: android
-        run: |
-          ./gradlew assembleRelease --stacktrace
+        run: cd android && ./gradlew assembleRelease
 
-      - name: Build Android Release AAB (Google Play Store Bundle)
-        working-directory: android
-        run: |
-          ./gradlew bundleRelease --stacktrace
+      - name: Build Android Release AAB
+        run: cd android && ./gradlew bundleRelease
 
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FPS-Booster-v2.4-PRO-APK
-          path: android/app/build/outputs/apk/release/*.apk
-          retention-days: 30
+          name: FPS-Booster-APK
+          path: android/app/build/outputs/apk/release/app-release.apk
 
       - name: Upload Release AAB Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FPS-Booster-v2.4-PRO-AAB
-          path: android/app/build/outputs/bundle/release/*.aab
-          retention-days: 30
+          name: FPS-Booster-AAB
+          path: android/app/build/outputs/bundle/release/app-release.aab
