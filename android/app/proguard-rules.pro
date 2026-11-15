@@ -1,0 +1,3 @@
+-keep class com.fpsbooster.pro.** { *; }
+-keep class com.getcapacitor.** { *; }
+-keep class com.getcapacitor.community.admob.** { *; }

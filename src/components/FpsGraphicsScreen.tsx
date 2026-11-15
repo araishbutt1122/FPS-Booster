@@ -76,7 +76,7 @@ export const FpsGraphicsScreen: React.FC = () => {
               Ultra Performance
             </h2>
             <p className="text-[11px] text-cyan-200/80 mt-1">
-              Unlock maximum shader processing and eliminate frame stutter.
+              Optimize shader processing and frame pacing for best FPS your device supports.
             </p>
           </div>
 
@@ -220,7 +220,7 @@ export const FpsGraphicsScreen: React.FC = () => {
               setGraphicsOpt(!graphicsOpt);
             }}
             className={`w-10 h-5 rounded-full transition-colors relative p-0.5 ${
-              graphicsOpt ? 'bg-cyan-500 shadow-[0_0_8px_#06b6d4]' : 'bg-slate-700'
+              graphicsOpt ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
             }`}
           >
             <div className={`w-4 h-4 rounded-full bg-white transition-transform ${graphicsOpt ? 'translate-x-5' : 'translate-x-0'}`} />
@@ -235,7 +235,7 @@ export const FpsGraphicsScreen: React.FC = () => {
             </div>
             <div>
               <h4 className="text-xs font-bold text-slate-200">Performance Mode</h4>
-              <p className="text-[10px] text-slate-400">Max CPU & GPU clock performance</p>
+              <p className="text-[10px] text-slate-400">Prioritize foreground game CPU &amp; GPU scheduling</p>
             </div>
           </div>
           <button
@@ -244,7 +244,7 @@ export const FpsGraphicsScreen: React.FC = () => {
               setPerfMode(!perfMode);
             }}
             className={`w-10 h-5 rounded-full transition-colors relative p-0.5 ${
-              perfMode ? 'bg-cyan-500 shadow-[0_0_8px_#06b6d4]' : 'bg-slate-700'
+              perfMode ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
             }`}
           >
             <div className={`w-4 h-4 rounded-full bg-white transition-transform ${perfMode ? 'translate-x-5' : 'translate-x-0'}`} />
@@ -259,7 +259,7 @@ export const FpsGraphicsScreen: React.FC = () => {
             </div>
             <div>
               <h4 className="text-xs font-bold text-slate-200">Reduce Lag</h4>
-              <p className="text-[10px] text-slate-400">Smooth frame pacing & touch latency</p>
+              <p className="text-[10px] text-slate-400">Smooth frame pacing &amp; touch response</p>
             </div>
           </div>
           <button
@@ -268,7 +268,7 @@ export const FpsGraphicsScreen: React.FC = () => {
               setReduceLag(!reduceLag);
             }}
             className={`w-10 h-5 rounded-full transition-colors relative p-0.5 ${
-              reduceLag ? 'bg-cyan-500 shadow-[0_0_8px_#06b6d4]' : 'bg-slate-700'
+              reduceLag ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
             }`}
           >
             <div className={`w-4 h-4 rounded-full bg-white transition-transform ${reduceLag ? 'translate-x-5' : 'translate-x-0'}`} />
@@ -283,7 +283,7 @@ export const FpsGraphicsScreen: React.FC = () => {
             </div>
             <div>
               <h4 className="text-xs font-bold text-slate-200">Improve Rendering</h4>
-              <p className="text-[10px] text-slate-400">Vulkan API shader cache compilation</p>
+              <p className="text-[10px] text-slate-400">Vulkan API shader cache optimization</p>
             </div>
           </div>
           <button
@@ -292,7 +292,7 @@ export const FpsGraphicsScreen: React.FC = () => {
               setImproveRendering(!improveRendering);
             }}
             className={`w-10 h-5 rounded-full transition-colors relative p-0.5 ${
-              improveRendering ? 'bg-cyan-500 shadow-[0_0_8px_#06b6d4]' : 'bg-slate-700'
+              improveRendering ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
             }`}
           >
             <div className={`w-4 h-4 rounded-full bg-white transition-transform ${improveRendering ? 'translate-x-5' : 'translate-x-0'}`} />

@@ -5,17 +5,17 @@ interface LogoProps {
   size?: 'sm' | 'md' | 'lg';
 }
 
-// Official High-Quality Logos with resilient fallback
+// Official High-Quality Logos with local bundled PNG primary + online fallback
 export const JazzCashLogo: React.FC<LogoProps> = ({ className = '', size = 'md' }) => {
   const [srcIndex, setSrcIndex] = useState(0);
 
   const sources = [
-    'https://upload.wikimedia.org/wikipedia/en/thumb/0/04/JazzCash_logo.png/320px-JazzCash_logo.png',
     '/assets/jazzcash_logo.png',
+    'https://upload.wikimedia.org/wikipedia/en/thumb/0/04/JazzCash_logo.png/320px-JazzCash_logo.png',
     'https://upload.wikimedia.org/wikipedia/commons/2/25/JazzCash_logo.svg'
   ];
 
-  const imgMaxHeight = size === 'sm' ? 'max-h-5' : size === 'lg' ? 'max-h-8' : 'max-h-7';
+  const imgMaxHeight = size === 'sm' ? 'max-h-6' : size === 'lg' ? 'max-h-10' : 'max-h-8';
 
   if (srcIndex >= sources.length) {
     return (
@@ -27,7 +27,7 @@ export const JazzCashLogo: React.FC<LogoProps> = ({ className = '', size = 'md' 
   }
 
   return (
-    <div className={`w-full h-full flex items-center justify-center p-0.5 ${className}`}>
+    <div className={`w-full h-full flex items-center justify-center p-1 ${className}`}>
       <img
         src={sources[srcIndex]}
         alt="JazzCash Official Logo"
@@ -43,12 +43,12 @@ export const EasypaisaLogo: React.FC<LogoProps> = ({ className = '', size = 'md'
   const [srcIndex, setSrcIndex] = useState(0);
 
   const sources = [
-    'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Easypaisa_logo.svg/320px-Easypaisa_logo.svg.png',
     '/assets/easypaisa_logo.png',
+    'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Easypaisa_logo.svg/320px-Easypaisa_logo.svg.png',
     'https://upload.wikimedia.org/wikipedia/commons/c/c5/Easypaisa_logo.svg'
   ];
 
-  const imgMaxHeight = size === 'sm' ? 'max-h-5' : size === 'lg' ? 'max-h-8' : 'max-h-7';
+  const imgMaxHeight = size === 'sm' ? 'max-h-6' : size === 'lg' ? 'max-h-10' : 'max-h-8';
 
   if (srcIndex >= sources.length) {
     return (
@@ -60,7 +60,7 @@ export const EasypaisaLogo: React.FC<LogoProps> = ({ className = '', size = 'md'
   }
 
   return (
-    <div className={`w-full h-full flex items-center justify-center p-0.5 ${className}`}>
+    <div className={`w-full h-full flex items-center justify-center p-1 ${className}`}>
       <img
         src={sources[srcIndex]}
         alt="Easypaisa Official Logo"
@@ -76,12 +76,12 @@ export const BinanceLogo: React.FC<LogoProps> = ({ className = '', size = 'md' }
   const [srcIndex, setSrcIndex] = useState(0);
 
   const sources = [
-    'https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Binance_logo.svg/320px-Binance_logo.svg.png',
     '/assets/binance_logo.png',
+    'https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Binance_logo.svg/320px-Binance_logo.svg.png',
     'https://upload.wikimedia.org/wikipedia/commons/1/12/Binance_logo.svg'
   ];
 
-  const imgMaxHeight = size === 'sm' ? 'max-h-5' : size === 'lg' ? 'max-h-8' : 'max-h-7';
+  const imgMaxHeight = size === 'sm' ? 'max-h-6' : size === 'lg' ? 'max-h-10' : 'max-h-8';
 
   if (srcIndex >= sources.length) {
     return (
@@ -93,7 +93,7 @@ export const BinanceLogo: React.FC<LogoProps> = ({ className = '', size = 'md' }
   }
 
   return (
-    <div className={`w-full h-full flex items-center justify-center p-0.5 ${className}`}>
+    <div className={`w-full h-full flex items-center justify-center p-1 ${className}`}>
       <img
         src={sources[srcIndex]}
         alt="Binance Pay Official Logo"

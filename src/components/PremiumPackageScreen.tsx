@@ -23,9 +23,10 @@ import { JazzCashLogo, EasypaisaLogo, BinanceLogo } from './PaymentLogos.tsx';
 export const PremiumPackageScreen: React.FC = () => {
   const { packages, state, submitTransaction } = useBooster();
   
-  // Selected package state (default to popular package)
+  // Selected package ID derived live from BoosterContext packages
   const defaultPkg = packages.find(p => p.isPopular) || packages[0];
-  const [selectedPkg, setSelectedPkg] = useState<ProPackage>(defaultPkg);
+  const [selectedPkgId, setSelectedPkgId] = useState<string>(defaultPkg.id);
+  const selectedPkg: ProPackage = packages.find(p => p.id === selectedPkgId) || defaultPkg;
 
   // In-line Form State
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethodType>('jazzcash');
@@ -149,23 +150,28 @@ export const PremiumPackageScreen: React.FC = () => {
           <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0 animate-pulse" />
           <span>🔥 BEST OFFER - LIMITED TIME! 50+ Players Roz Buy Kar Rahe Hain!</span>
         </div>
-        <p className="text-[11px] text-slate-400 font-semibold tracking-wide mt-1">
-          Unlock All Features • Play at 120 FPS
+        <p className="text-[11px] text-slate-300 font-semibold tracking-wide mt-1 text-center">
+          Optimize for best FPS your device supports
         </p>
       </div>
 
-      {/* FIX 1 - 5 PACKAGES (IN ORDER UPAR SE NEECHE - ALL CLICKABLE) */}
-      <div className="space-y-2.5">
-        <div className="flex items-center justify-between text-xs px-1">
-          <span className="font-orbitron font-bold text-slate-300 uppercase tracking-wider">
-            1. Select Your Package (5 Available)
-          </span>
-          <span className="text-[10px] text-amber-400 font-mono font-bold">
-            Tap to Select &amp; Update Price
+      {/* PACKAGES LIST (6 PACKAGES, SINGLE BEST VALUE BADGE ON PKG 7 DAYS) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-1.5 text-xs px-1">
+          <div className="flex items-center space-x-2">
+            <span className="font-orbitron font-bold text-slate-200 uppercase tracking-wider">
+              1. SELECT YOUR PACKAGE
+            </span>
+            <span className="text-[10px] text-cyan-300 font-mono bg-cyan-950/80 border border-cyan-800/60 px-2 py-0.5 rounded-full whitespace-nowrap">
+              {packages.length} Packages Available
+            </span>
+          </div>
+          <span className="text-[10px] text-amber-400 font-mono font-bold whitespace-nowrap">
+            Tap to Select Package
           </span>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-3 pt-2">
           {packages.map((pkg) => {
             const isSelected = selectedPkg.id === pkg.id;
             return (
@@ -173,26 +179,16 @@ export const PremiumPackageScreen: React.FC = () => {
                 key={pkg.id}
                 onClick={() => {
                   sound.playClick();
-                  setSelectedPkg(pkg);
+                  setSelectedPkgId(pkg.id);
                 }}
-                className={`rounded-2xl p-3 border-2 transition-all cursor-pointer relative overflow-hidden ${
+                className={`rounded-2xl px-3 pb-3 pt-3.5 border-2 transition-all cursor-pointer relative ${
                   isSelected
                     ? 'bg-gradient-to-r from-[#0d224d] via-[#091b3e] to-[#051128] border-amber-400 shadow-[0_0_20px_rgba(251,191,36,0.45)] ring-1 ring-amber-400'
                     : 'bg-[#071129]/90 border-cyan-900/50 hover:border-cyan-700/70 hover:bg-[#091636]'
                 }`}
               >
-                {pkg.badge && (
-                  <span className={`absolute top-2 right-2 text-[9px] font-orbitron font-extrabold px-2 py-0.5 rounded-full shadow-md ${
-                    pkg.id === 'pkg_7d'
-                      ? 'bg-gradient-to-r from-amber-400 to-yellow-300 text-black animate-pulse'
-                      : pkg.id === 'pkg_30d'
-                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
-                      : pkg.id === 'pkg_15d'
-                      ? 'bg-cyan-400 text-black'
-                      : pkg.id === 'pkg_3d'
-                      ? 'bg-red-500 text-white'
-                      : 'bg-emerald-400 text-black'
-                  }`}>
+                {pkg.id === 'pkg_7d' && pkg.badge && (
+                  <span className="absolute -top-2.5 left-3 text-[9px] font-orbitron font-extrabold px-2.5 py-0.5 rounded-full shadow-md whitespace-nowrap border border-black/20 bg-gradient-to-r from-amber-400 to-yellow-300 text-black">
                     {pkg.badge}
                   </span>
                 )}
@@ -204,33 +200,28 @@ export const PremiumPackageScreen: React.FC = () => {
                     {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                   </div>
 
-                  <div className="flex-1 pr-16 sm:pr-0">
-                    <div className="flex items-center space-x-2">
-                      <h4 className="font-orbitron font-bold text-sm text-white">
-                        {pkg.name}
-                      </h4>
-                      {pkg.isPopular && (
-                        <span className="text-[8px] font-mono px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-bold">
-                          POPULAR
-                        </span>
-                      )}
-                    </div>
+                  {/* Left Side: PKG Name, Duration & Perks */}
+                  <div className="flex-1 min-w-0">
+                    <h4 className="font-orbitron font-bold text-sm text-white">
+                      {pkg.name}
+                    </h4>
                     <p className="text-[11px] text-slate-300 font-medium mt-0.5">
                       {pkg.durationLabel}
                     </p>
                     {pkg.perks && pkg.perks.length > 0 && (
-                      <p className="text-[10px] text-cyan-400/90 font-mono mt-0.5 line-clamp-1">
+                      <p className="text-[10px] text-cyan-400/90 font-mono mt-0.5 leading-snug">
                         ✓ {pkg.perks.join(' • ')}
                       </p>
                     )}
                   </div>
 
-                  <div className="text-right">
-                    <span className="font-orbitron font-black text-base text-amber-300 block">
+                  {/* Right Side: Price & Cut Original Price */}
+                  <div className="text-right shrink-0 pl-2">
+                    <span className="font-orbitron font-black text-base text-amber-300 block whitespace-nowrap">
                       Rs. {pkg.pricePkr}
                     </span>
                     {pkg.originalPricePkr && (
-                      <span className="text-[10px] text-slate-500 line-through font-mono">
+                      <span className="text-[10px] text-slate-500 line-through font-mono block whitespace-nowrap">
                         Rs. {pkg.originalPricePkr}
                       </span>
                     )}
@@ -266,56 +257,56 @@ export const PremiumPackageScreen: React.FC = () => {
           <label className="text-[10px] text-slate-300 font-bold font-orbitron uppercase tracking-wider block">
             2. Choose Payment Method
           </label>
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-3 gap-2">
             {/* 1. Real JazzCash Official Logo */}
             <button
               type="button"
               onClick={() => { sound.playClick(); setSelectedMethod('jazzcash'); }}
-              className={`py-2 px-1.5 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative overflow-hidden h-[106px] ${
+              className={`py-2.5 px-1.5 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative h-[112px] ${
                 selectedMethod === 'jazzcash'
                   ? 'bg-gradient-to-b from-[#2a0608] to-[#120203] border-red-500 shadow-[0_0_16px_rgba(239,68,68,0.6)] ring-1 ring-red-400'
                   : 'bg-[#040e24] border-slate-800 hover:border-red-900/60'
               }`}
             >
-              <div className="w-full h-11 flex items-center justify-center p-1 bg-white/10 rounded-xl mb-1.5 border border-white/10">
+              <div className="w-full h-12 flex items-center justify-center p-1 bg-white/95 rounded-xl mb-1.5 shadow-inner">
                 <JazzCashLogo size="md" />
               </div>
-              <span className="text-[11px] font-bold font-orbitron text-white">JazzCash</span>
-              <span className="text-[9px] text-red-400 font-mono font-semibold">Official App</span>
+              <span className="text-[11px] font-bold font-orbitron text-white whitespace-nowrap">JazzCash</span>
+              <span className="text-[9px] text-red-400 font-mono font-semibold whitespace-nowrap">Official App</span>
             </button>
 
             {/* 2. Real Easypaisa Official Logo */}
             <button
               type="button"
               onClick={() => { sound.playClick(); setSelectedMethod('easypaisa'); }}
-              className={`py-2 px-1.5 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative overflow-hidden h-[106px] ${
+              className={`py-2.5 px-1.5 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative h-[112px] ${
                 selectedMethod === 'easypaisa'
                   ? 'bg-gradient-to-b from-[#022115] to-[#01110a] border-emerald-500 shadow-[0_0_16px_rgba(16,185,129,0.6)] ring-1 ring-emerald-400'
                   : 'bg-[#040e24] border-slate-800 hover:border-emerald-900/60'
               }`}
             >
-              <div className="w-full h-11 flex items-center justify-center p-1 bg-white/10 rounded-xl mb-1.5 border border-white/10">
+              <div className="w-full h-12 flex items-center justify-center p-1 bg-white/95 rounded-xl mb-1.5 shadow-inner">
                 <EasypaisaLogo size="md" />
               </div>
-              <span className="text-[11px] font-bold font-orbitron text-white">Easypaisa</span>
-              <span className="text-[9px] text-emerald-400 font-mono font-semibold">Official App</span>
+              <span className="text-[11px] font-bold font-orbitron text-white whitespace-nowrap">Easypaisa</span>
+              <span className="text-[9px] text-emerald-400 font-mono font-semibold whitespace-nowrap">Official App</span>
             </button>
 
             {/* 3. Real Binance Pay Official Logo */}
             <button
               type="button"
               onClick={() => { sound.playClick(); setSelectedMethod('binance'); }}
-              className={`py-2 px-1.5 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative overflow-hidden h-[106px] ${
+              className={`py-2.5 px-1.5 rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-95 cursor-pointer relative h-[112px] ${
                 selectedMethod === 'binance'
                   ? 'bg-gradient-to-b from-[#2a2205] to-[#120e01] border-yellow-500 shadow-[0_0_16px_rgba(234,179,8,0.6)] ring-1 ring-yellow-400'
                   : 'bg-[#040e24] border-slate-800 hover:border-yellow-900/60'
               }`}
             >
-              <div className="w-full h-11 flex items-center justify-center p-1 bg-white/10 rounded-xl mb-1.5 border border-white/10">
+              <div className="w-full h-12 flex items-center justify-center p-1 bg-white/95 rounded-xl mb-1.5 shadow-inner">
                 <BinanceLogo size="md" />
               </div>
-              <span className="text-[11px] font-bold font-orbitron text-white">Binance Pay</span>
-              <span className="text-[9px] text-yellow-400 font-mono font-semibold">Official App</span>
+              <span className="text-[11px] font-bold font-orbitron text-white whitespace-nowrap">Binance Pay</span>
+              <span className="text-[9px] text-yellow-400 font-mono font-semibold whitespace-nowrap">Official App</span>
             </button>
           </div>
         </div>
@@ -434,7 +425,7 @@ export const PremiumPackageScreen: React.FC = () => {
               <span>{submitResult.message}</span>
             </div>
             <p className="text-[11px] text-slate-300">
-              OCR Matched TID: <strong className="font-mono text-cyan-300">{submitResult.ocrTid}</strong>. 120 FPS VIP active for 30 Days!
+              OCR Matched TID: <strong className="font-mono text-cyan-300">{submitResult.ocrTid}</strong>. PRO VIP active for 30 Days!
             </p>
           </div>
         )}

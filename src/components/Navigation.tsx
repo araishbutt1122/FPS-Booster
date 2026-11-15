@@ -197,7 +197,7 @@ export const TopAppBar: React.FC = () => {
                   </span>
                 </div>
                 <p className="text-[11px] text-cyan-300">
-                  {state.isPro ? 'All 120 FPS configs & VPN active' : '120 FPS locked • Ad rewards available'}
+                  {state.isPro ? 'All PRO profiles & VPN active' : 'Optimize best FPS • Ad rewards available'}
                 </p>
               </div>
 
@@ -415,74 +415,74 @@ export const BottomNavBar: React.FC = () => {
 
   return (
     <>
-      <div className="relative z-30 px-3 pb-2 pt-1">
-        <div className="bg-[#070e24]/95 backdrop-blur-xl border border-cyan-900/60 rounded-2xl p-1.5 flex items-center justify-between shadow-xl shadow-black/90">
-          {/* 1. Monitor (Real-time HUD & Ping Monitor) */}
+      <div className="relative z-30 px-2 pb-2 pt-1 shrink-0">
+        <div className="bg-[#070e24]/95 backdrop-blur-xl border border-cyan-900/60 rounded-2xl p-1.5 flex items-center justify-between shadow-xl shadow-black/90 gap-0.5">
+          {/* 1. Monitor */}
           <button
             onClick={() => {
               sound.playClick();
               setCurrentScreen('dashboard');
             }}
-            className={`flex-1 flex flex-col items-center py-1 rounded-xl transition-all cursor-pointer ${
+            className={`flex-1 min-h-[44px] flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition-all cursor-pointer ${
               currentScreen === 'dashboard' 
-                ? 'text-cyan-400 drop-shadow-[0_0_8px_rgba(0,191,255,0.7)]' 
+                ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 drop-shadow-[0_0_8px_rgba(0,191,255,0.7)]' 
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Activity className="w-5 h-5 mb-0.5" />
-            <span className="text-[10px] font-medium tracking-tight">Monitor</span>
+            <Activity className="w-5 h-5 mb-0.5 shrink-0" />
+            <span className="text-[10px] font-medium tracking-tight whitespace-nowrap">Monitor</span>
           </button>
 
-          {/* 2. Block Apps (Shield) */}
+          {/* 2. Block Apps */}
           <button
             onClick={() => {
               sound.playClick();
               setCurrentScreen('block_apps');
             }}
-            className={`flex-1 flex flex-col items-center py-1 rounded-xl transition-all cursor-pointer ${
+            className={`flex-1 min-h-[44px] flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition-all cursor-pointer ${
               currentScreen === 'block_apps' 
-                ? 'text-cyan-400 drop-shadow-[0_0_8px_rgba(0,191,255,0.7)]' 
+                ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 drop-shadow-[0_0_8px_rgba(0,191,255,0.7)]' 
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Shield className="w-5 h-5 mb-0.5" />
-            <span className="text-[10px] font-medium tracking-tight">Block Apps</span>
+            <Shield className="w-5 h-5 mb-0.5 shrink-0" />
+            <span className="text-[10px] font-medium tracking-tight whitespace-nowrap">Block Apps</span>
           </button>
 
-          {/* 3. Boost (Home Screen with Tap to Boost button + Anime character) */}
+          {/* 3. Boost */}
           <button
             onClick={() => {
               sound.playBoost();
               setCurrentScreen('home');
             }}
-            className="flex flex-col items-center -my-3 px-2 z-10 transition-all cursor-pointer group"
+            className="flex flex-col items-center justify-center -my-3 px-2 z-10 transition-all cursor-pointer group shrink-0"
           >
             <div className={`w-12 h-12 rounded-full bg-gradient-to-tr from-cyan-500 via-blue-600 to-cyan-400 flex items-center justify-center shadow-[0_0_20px_rgba(0,191,255,0.85)] border-2 ${
               currentScreen === 'home' ? 'border-cyan-200 ring-2 ring-cyan-400 scale-105' : 'border-cyan-300'
             } group-hover:scale-105 transition-transform`}>
               <Rocket className="w-6 h-6 text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]" />
             </div>
-            <span className={`text-[10px] font-orbitron font-bold tracking-wider mt-1 drop-shadow-[0_0_6px_rgba(0,191,255,0.8)] ${
+            <span className={`text-[10px] font-orbitron font-bold tracking-wider mt-1 whitespace-nowrap drop-shadow-[0_0_6px_rgba(0,191,255,0.8)] ${
               currentScreen === 'home' ? 'text-cyan-200' : 'text-cyan-400'
             }`}>
               Boost
             </span>
           </button>
 
-          {/* 4. PRO (Crown - Golden Yellow #FFC107) */}
+          {/* 4. PRO */}
           <button
             onClick={() => {
               sound.playClick();
               setCurrentScreen('premium');
             }}
-            className={`flex-1 flex flex-col items-center py-1 rounded-xl transition-all cursor-pointer ${
+            className={`flex-1 min-h-[44px] flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition-all cursor-pointer ${
               currentScreen === 'premium' 
-                ? 'text-amber-400 drop-shadow-[0_0_8px_rgba(255,193,7,0.8)]' 
+                ? 'bg-amber-500/15 text-amber-300 border border-amber-400/50 drop-shadow-[0_0_8px_rgba(255,193,7,0.8)]' 
                 : 'text-amber-400/80 hover:text-amber-300'
             }`}
           >
-            <Crown className="w-5 h-5 mb-0.5 text-[#FFC107] fill-[#FFC107]/20" />
-            <span className="text-[10px] font-bold text-[#FFC107] tracking-tight">PRO</span>
+            <Crown className="w-5 h-5 mb-0.5 text-[#FFC107] fill-[#FFC107]/20 shrink-0" />
+            <span className="text-[10px] font-bold text-[#FFC107] tracking-tight whitespace-nowrap">PRO</span>
           </button>
 
           {/* 5. Settings */}
@@ -495,15 +495,15 @@ export const BottomNavBar: React.FC = () => {
             onMouseUp={handleSettingsMouseUp}
             onTouchStart={handleSettingsMouseDown}
             onTouchEnd={handleSettingsMouseUp}
-            className={`flex-1 flex flex-col items-center py-1 rounded-xl transition-all cursor-pointer ${
+            className={`flex-1 min-h-[44px] flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition-all cursor-pointer ${
               currentScreen === 'settings' 
-                ? 'text-cyan-400 drop-shadow-[0_0_8px_rgba(0,191,255,0.7)]' 
+                ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 drop-shadow-[0_0_8px_rgba(0,191,255,0.7)]' 
                 : 'text-slate-400 hover:text-slate-200'
             }`}
             title="Settings"
           >
-            <SettingsIcon className="w-5 h-5 mb-0.5" />
-            <span className="text-[10px] font-medium tracking-tight">Settings</span>
+            <SettingsIcon className="w-5 h-5 mb-0.5 shrink-0" />
+            <span className="text-[10px] font-medium tracking-tight whitespace-nowrap">Settings</span>
           </button>
         </div>
       </div>

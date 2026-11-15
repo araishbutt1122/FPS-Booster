@@ -31,15 +31,27 @@ export const RewardAdScreen: React.FC = () => {
   const [isPlayingAd, setIsPlayingAd] = useState(false);
   const [currentAdStep, setCurrentAdStep] = useState(1);
 
+  const [nativeAdFailed, setNativeAdFailed] = useState(false);
+
   const handleStartAd = async () => {
     sound.playClick();
-    const type = selectedOption.id === 'ad_10m' ? '10m' : 
-                 selectedOption.id === 'ad_30m' ? '30m' : 
-                 selectedOption.id === 'ad_60m' ? '60m' : '120m';
+    setNativeAdFailed(false);
+    const type = selectedOption.durationMinutes <= 30 ? '30m' : 
+                 selectedOption.durationMinutes <= 60 ? '60m' : '120m';
 
     if (typeof (window as any).showRewardedAd === 'function') {
       const res = await (window as any).showRewardedAd(type);
       if (res && res.success) {
+        return;
+      }
+      if (res && res.reason === 'skipped') {
+        setSnackBarMessage('Watch Full Ad To Get Boost');
+        return;
+      }
+      if (res && res.reason === 'failed') {
+        setNativeAdFailed(true);
+        setCurrentAdStep(1);
+        setIsPlayingAd(true);
         return;
       }
     }
@@ -54,17 +66,20 @@ export const RewardAdScreen: React.FC = () => {
       setSnackBarMessage(`Ad ${currentAdStep}/${selectedOption.adsCount} Done - Watch 1 More...`);
     } else {
       setIsPlayingAd(false);
+      setNativeAdFailed(false);
       setCurrentAdStep(1);
       const fps = selectedOption.durationMinutes >= 120 ? '120' : selectedOption.durationMinutes >= 60 ? '90' : '60';
       startRewardBoost(selectedOption.durationMinutes, fps, selectedOption.label);
+      setSnackBarMessage('Reward Earned');
     }
   };
 
   const handleAdSkippedOrFailed = () => {
     setIsPlayingAd(false);
+    setNativeAdFailed(false);
     setCurrentAdStep(1);
     sound.playClick();
-    setSnackBarMessage('Ad Not Completed - Watch Again');
+    setSnackBarMessage('Watch Full Ad To Get Boost');
   };
 
   const formatCountdown = (totalSec: number) => {
@@ -83,10 +98,10 @@ export const RewardAdScreen: React.FC = () => {
             <span>Ad Rewards</span>
           </div>
           <h2 className="font-orbitron font-extrabold text-lg text-white leading-tight">
-            Watch Ad Get 1 Hour Premium Boost
+            Watch Ad - Get Free Boost
           </h2>
           <p className="text-[11px] text-pink-200/80 mt-1">
-            Enjoy full 120 FPS Extreme &amp; VPN Firewall completely free.
+            Optimize for best FPS your device supports &amp; use VPN Firewall free.
           </p>
         </div>
 
@@ -122,7 +137,7 @@ export const RewardAdScreen: React.FC = () => {
           </div>
 
           <span className="text-[10px] bg-emerald-500 text-black font-bold px-2.5 py-1 rounded-full font-mono uppercase">
-            120 FPS ON
+            BOOST ON
           </span>
         </div>
       )}
@@ -222,8 +237,23 @@ export const RewardAdScreen: React.FC = () => {
           adStep={currentAdStep}
           totalAdSteps={selectedOption.adsCount}
           targetLabel={selectedOption.label}
+          initialError={nativeAdFailed}
           onAdCompleted={handleAdStepCompleted}
           onAdSkippedOrFailed={handleAdSkippedOrFailed}
+          onRetryNative={async () => {
+            if (typeof (window as any).showRewardedAd === 'function') {
+              const type = selectedOption.durationMinutes <= 30 ? '30m' : selectedOption.durationMinutes <= 60 ? '60m' : '120m';
+              const res = await (window as any).showRewardedAd(type);
+              if (res && res.success) {
+                setIsPlayingAd(false);
+                setNativeAdFailed(false);
+                return true;
+              }
+              return false;
+            }
+            setNativeAdFailed(false);
+            return true;
+          }}
         />
       )}
     </div>

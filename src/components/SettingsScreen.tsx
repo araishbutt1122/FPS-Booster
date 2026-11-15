@@ -69,12 +69,14 @@ export const SettingsScreen: React.FC = () => {
     setTimeout(() => setToast(null), 2500);
   };
 
+  const isUr = state.language === 'ur';
+
   return (
-    <div className="flex-1 overflow-y-auto px-4 pb-20 pt-1 space-y-4">
+    <div className="flex-1 overflow-y-auto px-4 pb-24 pt-1 space-y-4">
       {/* Toast */}
       {toast && (
-        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-cyan-900 border border-cyan-400 text-white px-5 py-2 rounded-full text-xs font-bold shadow-2xl flex items-center space-x-2 animate-bounce">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-cyan-900 border border-cyan-400 text-white px-5 py-2 rounded-full text-xs font-bold shadow-2xl flex items-center space-x-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{toast}</span>
         </div>
       )}
@@ -85,53 +87,57 @@ export const SettingsScreen: React.FC = () => {
           sound.playClick();
           setCurrentScreen('premium');
         }}
-        className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
+        className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
           state.isPro 
             ? 'bg-gradient-to-r from-amber-950/60 via-yellow-950/40 to-black border-amber-500/50 shadow-lg shadow-amber-950/50' 
             : 'bg-gradient-to-r from-[#071333] via-[#091b48] to-[#040e24] border-cyan-800/60 shadow-lg'
         }`}
       >
-        <div className="flex items-center space-x-3">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-400 to-yellow-600 flex items-center justify-center text-black shadow-md shadow-amber-400/40">
+        <div className="flex items-center space-x-3 min-w-0 flex-1">
+          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-400 to-yellow-600 flex items-center justify-center text-black shadow-md shadow-amber-400/40 shrink-0">
             <Crown className="w-6 h-6 fill-current" />
           </div>
-          <div>
-            <div className="flex items-center space-x-1.5">
+          <div className="min-w-0">
+            <div className="flex items-center flex-wrap gap-1.5">
               <h3 className="font-orbitron font-extrabold text-sm text-white">
-                {state.isPro ? 'PRO VIP MEMBER' : 'Upgrade to PRO'}
+                {state.isPro ? 'PRO VIP MEMBER' : (isUr ? 'PRO Upgrade Karein' : 'Upgrade to PRO')}
               </h3>
-              <span className="text-[10px] bg-amber-400 text-black px-1.5 py-0.2 rounded font-mono font-bold">
+              <span className="text-[10px] bg-amber-400 text-black px-1.5 py-0.5 rounded font-mono font-bold whitespace-nowrap">
                 {state.isPro ? state.proTier.toUpperCase() : 'VIP'}
               </span>
             </div>
             <p className="text-[11px] text-cyan-200 mt-0.5">
               {state.isPro 
-                ? 'All 120 FPS games, zero ping tunnel active' 
-                : 'Unlock 120 FPS Extreme & Anti-Lag Engine'}
+                ? (isUr ? 'Tamam PRO features aur VPN active hain' : 'All PRO features & VPN active')
+                : (isUr ? 'PRO Features Unlock Karein' : 'Unlock Pro Features')}
             </p>
           </div>
         </div>
 
-        <button className="px-3 py-1.5 rounded-xl bg-amber-400 text-black font-orbitron font-bold text-xs uppercase shadow-md hover:bg-amber-300">
+        <button className="px-3 py-1.5 rounded-xl bg-amber-400 text-black font-orbitron font-bold text-xs uppercase shadow-md hover:bg-amber-300 shrink-0 cursor-pointer">
           {state.isPro ? 'VIEW' : 'UPGRADE'}
         </button>
       </div>
 
-      {/* Main Settings Toggles */}
+      {/* Main Settings Toggles (ON = Green, OFF = Grey) */}
       <div className="bg-[#071129]/90 border border-cyan-900/50 rounded-2xl p-4 shadow-xl space-y-4">
         <h3 className="font-orbitron font-bold text-xs text-cyan-300 uppercase tracking-wider">
-          Booster Automation & Firewall
+          {isUr ? 'Booster Automation Aur Firewall' : 'Booster Automation & Firewall'}
         </h3>
 
         {/* VPN Firewall */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3 max-w-[78%]">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-3 min-w-0 flex-1">
             <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800/50 flex items-center justify-center text-cyan-400 shrink-0">
               <Shield className="w-4 h-4" />
             </div>
-            <div>
-              <h4 className="text-xs font-bold text-slate-200">Block VPN Firewall</h4>
-              <p className="text-[10px] text-slate-400">Use Block VPN to restrict background apps during gaming</p>
+            <div className="min-w-0">
+              <h4 className="text-xs font-bold text-slate-200">
+                {isUr ? 'VPN Firewall Block' : 'Block VPN Firewall'}
+              </h4>
+              <p className="text-[10px] text-slate-400">
+                {isUr ? 'Gaming ke waqt background apps ka internet rokein' : 'Use Block VPN to restrict background apps during gaming'}
+              </p>
             </div>
           </div>
           <button
@@ -140,8 +146,8 @@ export const SettingsScreen: React.FC = () => {
               updateSetting('isVpnActive', next);
               showToast(next ? 'VPN Firewall Enabled' : 'VPN Firewall Disabled');
             }}
-            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 ${
-              state.isVpnActive ? 'bg-cyan-500 shadow-[0_0_8px_#06b6d4]' : 'bg-slate-700'
+            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 shrink-0 cursor-pointer ${
+              state.isVpnActive ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
             }`}
           >
             <div className={`w-5 h-5 rounded-full bg-white transition-transform ${state.isVpnActive ? 'translate-x-5' : 'translate-x-0'}`} />
@@ -149,14 +155,18 @@ export const SettingsScreen: React.FC = () => {
         </div>
 
         {/* Auto Boost */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3 max-w-[78%]">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-3 min-w-0 flex-1">
             <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800/50 flex items-center justify-center text-cyan-400 shrink-0">
               <Rocket className="w-4 h-4" />
             </div>
-            <div>
-              <h4 className="text-xs font-bold text-slate-200">Auto Boost</h4>
-              <p className="text-[10px] text-slate-400">Boost automatically when game package starts</p>
+            <div className="min-w-0">
+              <h4 className="text-xs font-bold text-slate-200">
+                {isUr ? 'Auto Boost' : 'Auto Boost'}
+              </h4>
+              <p className="text-[10px] text-slate-400">
+                {isUr ? 'Game start hote hi khud boost shuru ho' : 'Boost automatically when game package starts'}
+              </p>
             </div>
           </div>
           <button
@@ -165,8 +175,8 @@ export const SettingsScreen: React.FC = () => {
               updateSetting('autoBoostOnGameLaunch', next);
               showToast(next ? 'Auto Boost Enabled' : 'Auto Boost Disabled');
             }}
-            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 ${
-              state.autoBoostOnGameLaunch ? 'bg-cyan-500 shadow-[0_0_8px_#06b6d4]' : 'bg-slate-700'
+            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 shrink-0 cursor-pointer ${
+              state.autoBoostOnGameLaunch ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
             }`}
           >
             <div className={`w-5 h-5 rounded-full bg-white transition-transform ${state.autoBoostOnGameLaunch ? 'translate-x-5' : 'translate-x-0'}`} />
@@ -174,14 +184,18 @@ export const SettingsScreen: React.FC = () => {
         </div>
 
         {/* RAM Cleaner */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3 max-w-[78%]">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-3 min-w-0 flex-1">
             <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800/50 flex items-center justify-center text-cyan-400 shrink-0">
               <Cpu className="w-4 h-4" />
             </div>
-            <div>
-              <h4 className="text-xs font-bold text-slate-200">RAM Cleaner</h4>
-              <p className="text-[10px] text-slate-400">Deep clean RAM cache before starting games</p>
+            <div className="min-w-0">
+              <h4 className="text-xs font-bold text-slate-200">
+                {isUr ? 'RAM Cleaner' : 'RAM Cleaner'}
+              </h4>
+              <p className="text-[10px] text-slate-400">
+                {isUr ? 'Game se pehle RAM cache saaf karein' : 'Deep clean RAM cache before starting games'}
+              </p>
             </div>
           </div>
           <button
@@ -190,8 +204,8 @@ export const SettingsScreen: React.FC = () => {
               updateSetting('deepRamClean', next);
               showToast(next ? 'Deep RAM Clean Enabled' : 'Deep RAM Clean Disabled');
             }}
-            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 ${
-              state.deepRamClean ? 'bg-cyan-500 shadow-[0_0_8px_#06b6d4]' : 'bg-slate-700'
+            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 shrink-0 cursor-pointer ${
+              state.deepRamClean ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
             }`}
           >
             <div className={`w-5 h-5 rounded-full bg-white transition-transform ${state.deepRamClean ? 'translate-x-5' : 'translate-x-0'}`} />
@@ -199,14 +213,18 @@ export const SettingsScreen: React.FC = () => {
         </div>
 
         {/* Network Optimizer */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3 max-w-[78%]">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-3 min-w-0 flex-1">
             <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800/50 flex items-center justify-center text-cyan-400 shrink-0">
               <Wifi className="w-4 h-4" />
             </div>
-            <div>
-              <h4 className="text-xs font-bold text-slate-200">Network Optimizer</h4>
-              <p className="text-[10px] text-slate-400">Prioritize game packets, lower ping & jitter</p>
+            <div className="min-w-0">
+              <h4 className="text-xs font-bold text-slate-200">
+                {isUr ? 'Network Optimizer' : 'Network Optimizer'}
+              </h4>
+              <p className="text-[10px] text-slate-400">
+                {isUr ? 'Behtar game server route aur kam jitter' : 'Prioritize game packets, lower ping & jitter'}
+              </p>
             </div>
           </div>
           <button
@@ -215,8 +233,8 @@ export const SettingsScreen: React.FC = () => {
               updateSetting('networkOptimizer', next);
               showToast(next ? 'Network Priority Enabled' : 'Network Priority Disabled');
             }}
-            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 ${
-              state.networkOptimizer ? 'bg-cyan-500 shadow-[0_0_8px_#06b6d4]' : 'bg-slate-700'
+            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 shrink-0 cursor-pointer ${
+              state.networkOptimizer ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
             }`}
           >
             <div className={`w-5 h-5 rounded-full bg-white transition-transform ${state.networkOptimizer ? 'translate-x-5' : 'translate-x-0'}`} />
@@ -224,14 +242,18 @@ export const SettingsScreen: React.FC = () => {
         </div>
 
         {/* App Lock */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3 max-w-[78%]">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-3 min-w-0 flex-1">
             <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800/50 flex items-center justify-center text-cyan-400 shrink-0">
               <Lock className="w-4 h-4" />
             </div>
-            <div>
-              <h4 className="text-xs font-bold text-slate-200">App Lock</h4>
-              <p className="text-[10px] text-slate-400">Lock booster settings and FPS profile with PIN</p>
+            <div className="min-w-0">
+              <h4 className="text-xs font-bold text-slate-200">
+                {isUr ? 'App Lock' : 'App Lock'}
+              </h4>
+              <p className="text-[10px] text-slate-400">
+                {isUr ? 'Booster settings ko lock karein' : 'Lock booster settings and FPS profile'}
+              </p>
             </div>
           </div>
           <button
@@ -240,8 +262,8 @@ export const SettingsScreen: React.FC = () => {
               updateSetting('appLock', next);
               showToast(next ? 'App Lock Protected' : 'App Lock Disabled');
             }}
-            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 ${
-              state.appLock ? 'bg-cyan-500 shadow-[0_0_8px_#06b6d4]' : 'bg-slate-700'
+            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 shrink-0 cursor-pointer ${
+              state.appLock ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
             }`}
           >
             <div className={`w-5 h-5 rounded-full bg-white transition-transform ${state.appLock ? 'translate-x-5' : 'translate-x-0'}`} />
@@ -251,10 +273,15 @@ export const SettingsScreen: React.FC = () => {
 
       {/* Hardware & System Information */}
       <div className="bg-[#071129]/90 border border-cyan-900/50 rounded-2xl p-4 shadow-xl space-y-3">
-        <h3 className="font-orbitron font-bold text-xs text-cyan-300 uppercase tracking-wider flex items-center space-x-1.5">
-          <Smartphone className="w-4 h-4 text-cyan-400" />
-          <span>Device Hardware Status</span>
-        </h3>
+        <div className="flex items-center justify-between flex-wrap gap-1">
+          <h3 className="font-orbitron font-bold text-xs text-cyan-300 uppercase tracking-wider flex items-center space-x-1.5">
+            <Smartphone className="w-4 h-4 text-cyan-400 shrink-0" />
+            <span>{isUr ? 'Device Hardware Status' : 'Device Hardware Status'}</span>
+          </h3>
+          <span className="text-[10px] text-emerald-300 font-mono font-bold">
+            Detected: {Number(state.totalRamGb || 4).toFixed(1)} GB RAM, {state.maxHardwareHz}Hz Max
+          </span>
+        </div>
 
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div className="bg-[#050c1f] p-2.5 rounded-xl border border-cyan-950">
@@ -265,9 +292,9 @@ export const SettingsScreen: React.FC = () => {
           </div>
 
           <div className="bg-[#050c1f] p-2.5 rounded-xl border border-cyan-950">
-            <span className="text-[10px] text-slate-400 block font-mono">VSYNC SYNC</span>
+            <span className="text-[10px] text-slate-400 block font-mono">VSYNC</span>
             <span className="font-orbitron font-bold text-sm text-emerald-400">
-              Choreographer
+              ON
             </span>
           </div>
 
@@ -280,38 +307,56 @@ export const SettingsScreen: React.FC = () => {
 
           <div className="bg-[#050c1f] p-2.5 rounded-xl border border-cyan-950">
             <span className="text-[10px] text-slate-400 block font-mono">TOTAL RAM</span>
-            <span className="font-orbitron font-bold text-sm text-cyan-300">
-              {state.totalRamGb}.0 GB LPDDR5
+            <span className="font-sans font-extrabold text-sm tracking-wide text-cyan-300">
+              {Number(state.totalRamGb || 4).toFixed(1)} GB RAM
             </span>
           </div>
         </div>
+
+        <p className="text-[10px] text-slate-400 font-mono text-center pt-0.5">
+          {isUr ? 'Performance aapke device ke hardware par munhasir hai' : 'Performance depends on device'}
+        </p>
       </div>
 
       {/* Language Preferences */}
-      <div className="bg-[#071129]/90 border border-cyan-900/50 rounded-2xl p-4 shadow-xl flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800/50 flex items-center justify-center text-cyan-400">
+      <div className="bg-[#071129]/90 border border-cyan-900/50 rounded-2xl p-4 shadow-xl flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center space-x-3 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800/50 flex items-center justify-center text-cyan-400 shrink-0">
             <Languages className="w-4 h-4" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h4 className="text-xs font-bold text-slate-200">Language / Zaban</h4>
-            <p className="text-[10px] text-slate-400">English or Roman Urdu interface</p>
+            <p className="text-[10px] text-slate-400">
+              {isUr ? 'Roman Urdu active hai' : 'English interface active'}
+            </p>
           </div>
         </div>
 
-        <div className="flex bg-slate-900 rounded-xl p-1 border border-cyan-900/40">
+        <div className="flex bg-slate-900 rounded-xl p-1 border border-cyan-900/60 shrink-0">
           <button
-            onClick={() => setLanguage('en')}
-            className={`px-3 py-1 rounded-lg text-xs font-bold ${
-              state.language === 'en' ? 'bg-cyan-500 text-black' : 'text-slate-400'
+            type="button"
+            onClick={() => {
+              setLanguage('en');
+              showToast('Language: English');
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              state.language === 'en'
+                ? 'bg-emerald-500 text-black shadow-[0_0_10px_rgba(16,185,129,0.5)]'
+                : 'text-slate-400 hover:text-white'
             }`}
           >
             English
           </button>
           <button
-            onClick={() => setLanguage('ur')}
-            className={`px-3 py-1 rounded-lg text-xs font-bold ${
-              state.language === 'ur' ? 'bg-cyan-500 text-black' : 'text-slate-400'
+            type="button"
+            onClick={() => {
+              setLanguage('ur');
+              showToast('Zaban: Roman Urdu');
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              state.language === 'ur'
+                ? 'bg-emerald-500 text-black shadow-[0_0_10px_rgba(16,185,129,0.5)]'
+                : 'text-slate-400 hover:text-white'
             }`}
           >
             Roman Urdu

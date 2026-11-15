@@ -168,7 +168,7 @@ const MainAppContent: React.FC = () => {
       <footer className="w-full max-w-4xl px-4 py-2 hidden sm:flex items-center justify-center space-x-2 text-[10px] text-slate-400 font-mono z-30">
         <span className="flex items-center space-x-1 text-cyan-400">
           <Zap className="w-3 h-3" />
-          <span>60/90/120 FPS Support</span>
+          <span>Device-Best FPS Optimizer</span>
         </span>
         <span>•</span>
         <span className="flex items-center space-x-1 text-emerald-400">

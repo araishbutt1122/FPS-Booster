@@ -1,5 +1,8 @@
+import { RealStats } from '../app.js';
+
 export class RefreshRateDetector {
   private static detectedMaxHz: number = 60;
+  private static hasNativeOrHighHz: boolean = false;
   private static isDetecting: boolean = false;
   private static listeners: ((hz: number) => void)[] = [];
 
@@ -15,12 +18,42 @@ export class RefreshRateDetector {
     };
   }
 
-  public static detectHardwareHz() {
+  private static notify(hz: number) {
+    this.detectedMaxHz = hz;
+    this.listeners.forEach(cb => cb(hz));
+  }
+
+  public static async detectHardwareHz() {
     if (this.isDetecting || typeof window === 'undefined') return;
     this.isDetecting = true;
 
+    // 1. Check Native Capacitor RealStats Plugin first (exact Android Display.getRefreshRate())
+    try {
+      if (RealStats && typeof RealStats.getRealFPS === 'function') {
+        const res = await RealStats.getRealFPS();
+        if (res && res.refreshRate && Number(res.refreshRate) >= 50) {
+          const nativeHz = Math.round(Number(res.refreshRate));
+          this.hasNativeOrHighHz = true;
+          this.notify(nativeHz);
+          this.isDetecting = false;
+          return;
+        }
+      }
+    } catch {
+      // Fallback to browser detection if not running inside Android native bridge
+    }
+
+    // 2. Check window.screen.refreshRate if exposed by browser/WebView
+    const screenRefresh = (window.screen as any)?.refreshRate;
+    if (screenRefresh && Number(screenRefresh) >= 50) {
+      const hz = Math.round(Number(screenRefresh));
+      if (hz > 60) this.hasNativeOrHighHz = true;
+      this.notify(hz);
+    }
+
+    // 3. Measure actual requestAnimationFrame pacing
     let frameCount = 0;
-    let startTime = performance.now();
+    const startTime = performance.now();
     const samples: number[] = [];
     let lastTime = performance.now();
 
@@ -30,7 +63,6 @@ export class RefreshRateDetector {
       lastTime = now;
 
       if (frameCount > 5) {
-        // Skip first warm-up frames
         samples.push(delta);
       }
       frameCount++;
@@ -38,25 +70,22 @@ export class RefreshRateDetector {
       if (samples.length < 50 && now - startTime < 1200) {
         requestAnimationFrame(sampleFrames);
       } else {
-        // Calculate average frame interval
         const validSamples = samples.filter(d => d > 3 && d < 40);
         if (validSamples.length > 10) {
           const avgDelta = validSamples.reduce((a, b) => a + b, 0) / validSamples.length;
           const calculatedHz = Math.round(1000 / avgDelta);
 
-          // Map to standard gaming display thresholds: 60, 90, 120, 144, 165
           let targetHz = 60;
-          if (calculatedHz >= 140) targetHz = 144;
-          else if (calculatedHz >= 110) targetHz = 120;
-          else if (calculatedHz >= 80) targetHz = 90;
+          if (calculatedHz >= 135) targetHz = 144;
+          else if (calculatedHz >= 105) targetHz = 120;
+          else if (calculatedHz >= 78) targetHz = 90;
           else targetHz = 60;
 
-          this.detectedMaxHz = targetHz;
-        } else {
-          this.detectedMaxHz = 60;
+          if (targetHz > 60 || !this.hasNativeOrHighHz) {
+            this.notify(targetHz);
+          }
         }
         this.isDetecting = false;
-        this.listeners.forEach(cb => cb(this.detectedMaxHz));
       }
     };
 
