@@ -57,8 +57,16 @@ jobs:
             keytool -genkeypair -v -keystore android/app/keystore.jks -alias fpsbooster -keyalg RSA -keysize 2048 -validity 10000 -storepass fpsbooster120 -keypass fpsbooster120 -dname "CN=FPS Booster, OU=Gaming, O=FPS Booster Pro, L=City, S=State, C=US"
           fi
 
-      - name: Grant Execute Permission to Gradle Wrapper
+      - name: Grant Execute Permission to Gradle Wrapper - FIXED Missing gradlew
         run: |
+          ls -la android/
+          if [ ! -f "android/gradlew" ]; then
+            echo "gradlew missing - downloading wrapper"
+            mkdir -p android/gradle/wrapper
+            curl -L -o android/gradlew https://raw.githubusercontent.com/gradle/gradle/master/gradlew
+            curl -L -o android/gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/master/gradle/wrapper/gradle-wrapper.jar
+            printf "distributionBase=GRADLE_USER_HOME\ndistributionPath=wrapper/dists\ndistributionUrl=https\\://services.gradle.org/distributions/gradle-8.13-all.zip\nzipStoreBase=GRADLE_USER_HOME\nzipStorePath=wrapper/dists\n" > android/gradle/wrapper/gradle-wrapper.properties
+          fi
           chmod +x android/gradlew
           ls -lh android/gradlew
 
