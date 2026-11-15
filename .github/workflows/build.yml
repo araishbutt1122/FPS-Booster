@@ -32,7 +32,6 @@ jobs:
           if [ -f capacitor.config.json ]; then
             cp capacitor.config.json android/app/src/main/assets/capacitor.config.json
           fi
-          ls -lh android/app/src/main/assets/public
 
       - name: Setup Java 21 - For SDK 36
         uses: actions/setup-java@v4
@@ -41,25 +40,22 @@ jobs:
           java-version: '21'
           cache: gradle
 
-      - name: Setup Android SDK - FIXED For SDK 36
-        uses: android-actions/setup-android@v3
-        with:
-          api-level: 36
-          build-tools: 36.0.0
-          cmdline-tools-version: 11.0
-
-      - name: Accept Licenses + Install SDK Packages
+      - name: Setup Android SDK - Preinstalled Wala - 404 FIX
         run: |
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+          sdkmanager --version
           yes | sdkmanager --licenses || true
           sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Generate Release Keystore (if not provided)
+      - name: Generate Release Keystore
         run: |
           mkdir -p android/app
           if [ ! -f "android/app/keystore.jks" ]; then
             keytool -genkeypair -v -keystore android/app/keystore.jks -alias fpsbooster -keyalg RSA -keysize 2048 -validity 10000 -storepass fpsbooster120 -keypass fpsbooster120 -dname "CN=FPS Booster, OU=Gaming, O=FPS Booster Pro, L=City, S=State, C=US"
           fi
-          echo "KEYSTORE_EXISTS=true" >> $GITHUB_ENV
 
       - name: Grant Execute Permission to Gradle Wrapper
         run: |
@@ -74,14 +70,11 @@ jobs:
           KEY_ALIAS: fpsbooster
           KEY_PASSWORD: fpsbooster120
         run: |
-          ./gradlew assembleDebug assembleRelease bundleRelease --stacktrace
+          ./gradlew clean assembleDebug assembleRelease bundleRelease --stacktrace
 
       - name: Verify APK & AAB Outputs
         run: |
-          echo "=== Searching generated APKs and AABs ==="
           find android/app/build/outputs -type f \( -name "*.apk" -o -name "*.aab" \) -exec ls -lh {} \;
-          ls -lh android/app/build/outputs/apk/release/app-release.apk
-          ls -lh android/app/build/outputs/bundle/release/app-release.aab
 
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
