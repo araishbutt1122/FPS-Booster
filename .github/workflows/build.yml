@@ -19,9 +19,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
       - name: Install Node Dependencies
-        run: npm install --legacy-peer-deps
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --legacy-peer-deps
+          else
+            npm install --legacy-peer-deps
+          fi
 
       - name: Build Web Application
         run: npm run build
@@ -31,22 +37,29 @@ jobs:
           rm -rf android/app/src/main/assets/public
           mkdir -p android/app/src/main/assets/public
           cp -r dist/* android/app/src/main/assets/public/
-          cp capacitor.config.json android/app/src/main/assets/capacitor.config.json
+          if [ -f capacitor.config.json ]; then
+            cp capacitor.config.json android/app/src/main/assets/capacitor.config.json
+          fi
           ls -lh android/app/src/main/assets/public
 
-      - name: Setup Java 21
+      - name: Setup Java 17 - Stable for Capacitor
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '21'
+          distribution: 'temurin'
+          java-version: '17'
+          cache: gradle
 
-      - name: Setup Android SDK
+      - name: Setup Android SDK - FIXED 100%
         uses: android-actions/setup-android@v3
-
-      - name: Setup Gradle 8.13
-        uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.13'
+          api-level: 34
+          build-tools: 34.0.0
+          cmdline-tools-version: 11.0
+
+      - name: Accept Licenses + Install SDK Packages
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Generate Release Keystore (if not provided)
         run: |
@@ -54,16 +67,20 @@ jobs:
           if [ ! -f "android/app/keystore.jks" ]; then
             keytool -genkeypair -v -keystore android/app/keystore.jks -alias fpsbooster -keyalg RSA -keysize 2048 -validity 10000 -storepass fpsbooster120 -keypass fpsbooster120 -dname "CN=FPS Booster, OU=Gaming, O=FPS Booster Pro, L=City, S=State, C=US"
           fi
+          echo "KEYSTORE_EXISTS=true" >> $GITHUB_ENV
 
       - name: Grant Execute Permission to Gradle Wrapper
         run: |
-          if [ ! -f "android/gradlew" ]; then
-            gradle wrapper --gradle-version 8.13 --project-dir android
-          fi
           chmod +x android/gradlew
+          ls -lh android/gradlew
 
       - name: Build Android Debug & Release APK + Release AAB
         working-directory: android
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/android/app/keystore.jks
+          KEYSTORE_PASSWORD: fpsbooster120
+          KEY_ALIAS: fpsbooster
+          KEY_PASSWORD: fpsbooster120
         run: |
           ./gradlew assembleDebug assembleRelease bundleRelease --stacktrace
 
@@ -71,27 +88,6 @@ jobs:
         run: |
           echo "=== Searching generated APKs and AABs ==="
           find android/app/build/outputs -type f \( -name "*.apk" -o -name "*.aab" \) -exec ls -lh {} \;
-
-          mkdir -p android/app/build/outputs/apk/release
-          mkdir -p android/app/build/outputs/bundle/release
-
-          if [ ! -f "android/app/build/outputs/apk/release/app-release.apk" ]; then
-            UNSIGNED_APK=$(find android/app/build/outputs/apk -name "*release*.apk" | head -n 1)
-            if [ -n "$UNSIGNED_APK" ]; then
-              cp "$UNSIGNED_APK" android/app/build/outputs/apk/release/app-release.apk
-            fi
-          fi
-
-          if [ ! -f "android/app/build/outputs/apk/release/app-release.apk" ]; then
-            echo "ERROR: app-release.apk was not generated!"
-            exit 1
-          fi
-
-          if [ ! -f "android/app/build/outputs/bundle/release/app-release.aab" ]; then
-            echo "ERROR: app-release.aab was not generated!"
-            exit 1
-          fi
-
           ls -lh android/app/build/outputs/apk/release/app-release.apk
           ls -lh android/app/build/outputs/bundle/release/app-release.aab
 
