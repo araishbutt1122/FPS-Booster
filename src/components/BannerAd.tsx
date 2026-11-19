@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Capacitor } from '@capacitor/core';
 import {
   AdMob,
@@ -13,7 +13,13 @@ export const BannerAd: React.FC = () => {
   const isNative = Capacitor.isNativePlatform();
   const shouldShowBanner = currentScreen === 'home' || currentScreen === 'premium';
 
-  const [nativeLoaded, setNativeLoaded] = useState(false);
+  const [bannerState, setBannerState] = useState<'loading' | 'loaded' | 'retry'>('loading');
+  const [retryCount, setRetryCount] = useState(0);
+
+  const handleRetryBanner = useCallback(() => {
+    setBannerState('loading');
+    setRetryCount((c) => c + 1);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -23,7 +29,7 @@ export const BannerAd: React.FC = () => {
       if (isNative) {
         AdMob.hideBanner().catch(() => {});
       }
-      setNativeLoaded(false);
+      setBannerState('loading');
       return;
     }
 
@@ -31,15 +37,26 @@ export const BannerAd: React.FC = () => {
       return;
     }
 
+    setBannerState('loading');
+
+    // Don't stay stuck on "Ad Loading..." after 5 seconds
+    const timeoutId = setTimeout(() => {
+      if (isMounted) {
+        setBannerState((prev) => (prev === 'loaded' ? 'loaded' : 'retry'));
+      }
+    }, 5000);
+
     async function setupNativeBanner() {
       try {
         const hLoaded = await AdMob.addListener(BannerAdPluginEvents.Loaded, () => {
-          if (isMounted) setNativeLoaded(true);
+          clearTimeout(timeoutId);
+          if (isMounted) setBannerState('loaded');
         });
         handles.push(hLoaded);
 
         const hFailed = await AdMob.addListener(BannerAdPluginEvents.FailedToLoad, () => {
-          if (isMounted) setNativeLoaded(false);
+          clearTimeout(timeoutId);
+          if (isMounted) setBannerState('retry');
         });
         handles.push(hFailed);
 
@@ -52,7 +69,8 @@ export const BannerAd: React.FC = () => {
           isTesting: false,
         });
       } catch {
-        if (isMounted) setNativeLoaded(false);
+        clearTimeout(timeoutId);
+        if (isMounted) setBannerState('retry');
       }
     }
 
@@ -60,6 +78,7 @@ export const BannerAd: React.FC = () => {
 
     return () => {
       isMounted = false;
+      clearTimeout(timeoutId);
       handles.forEach((h) => {
         try {
           h.remove().catch(() => {});
@@ -67,19 +86,29 @@ export const BannerAd: React.FC = () => {
       });
       AdMob.hideBanner().catch(() => {});
     };
-  }, [shouldShowBanner, isNative]);
+  }, [shouldShowBanner, isNative, retryCount]);
 
   // Show Banner ONLY on Home Screen and Premium Screen
   if (!shouldShowBanner) {
     return null;
   }
 
-  // Native Android: reserve clean height directly above bottom nav bar; show "Ad Loading..." until loaded (never blank black space)
+  // Native Android: reserve clean height above bottom nav bar; never get stuck on "Ad Loading..." after 5s
   if (isNative) {
     return (
       <div className="w-full px-3 py-1 z-20 shrink-0">
-        {nativeLoaded ? (
+        {bannerState === 'loaded' ? (
           <div className="w-full h-[54px] shrink-0" />
+        ) : bannerState === 'retry' ? (
+          <button
+            type="button"
+            onClick={handleRetryBanner}
+            className="w-full h-[54px] bg-[#061129] border border-cyan-800/70 rounded-xl px-3 flex items-center justify-center cursor-pointer active:scale-98"
+          >
+            <span className="text-[11px] font-mono text-amber-300 font-semibold">
+              No Ad Found - Tap To Retry
+            </span>
+          </button>
         ) : (
           <div className="w-full h-[54px] bg-[#061129] border border-cyan-900/60 rounded-xl px-3 flex items-center justify-center">
             <span className="text-[11px] font-mono text-cyan-300/80 animate-pulse">

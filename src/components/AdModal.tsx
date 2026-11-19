@@ -45,10 +45,12 @@ export const AdModal: React.FC<AdModalProps> = ({
     setPhase('loading');
     setCountdown(5);
     setIsRewarded(false);
+
     const loadTimer = setTimeout(() => {
       setPhase('watching');
       sound.playBoost();
-    }, 1500);
+    }, 1200);
+
     return () => clearTimeout(loadTimer);
   }, []);
 
@@ -60,6 +62,15 @@ export const AdModal: React.FC<AdModalProps> = ({
     const cleanup = startAdLoadSequence();
     return cleanup;
   }, [adStep, initialError, startAdLoadSequence]);
+
+  // 5-second max wait guard if phase stays stuck in 'loading'
+  useEffect(() => {
+    if (phase !== 'loading') return;
+    const safetyTimer = setTimeout(() => {
+      setPhase('error');
+    }, 5000);
+    return () => clearTimeout(safetyTimer);
+  }, [phase]);
 
   useEffect(() => {
     if (phase !== 'watching') return;
@@ -93,8 +104,18 @@ export const AdModal: React.FC<AdModalProps> = ({
     sound.playClick();
     if (onRetryNative) {
       setPhase('loading');
-      const ok = await onRetryNative();
-      if (!ok) {
+      const retryTimeout = setTimeout(() => {
+        setPhase('error');
+      }, 5000);
+
+      try {
+        const ok = await onRetryNative();
+        clearTimeout(retryTimeout);
+        if (!ok) {
+          setPhase('error');
+        }
+      } catch {
+        clearTimeout(retryTimeout);
         setPhase('error');
       }
       return;
@@ -144,7 +165,7 @@ export const AdModal: React.FC<AdModalProps> = ({
             </div>
             <div>
               <h3 className="font-orbitron font-bold text-base text-white">
-                Loading Ad...
+                Ad Loading...
               </h3>
               <p className="text-xs text-cyan-300/80 font-mono mt-1">
                 Connecting to Google AdMob Rewarded Server
@@ -154,25 +175,31 @@ export const AdModal: React.FC<AdModalProps> = ({
         )}
 
         {phase === 'error' && (
-          <div className="flex-1 p-6 flex flex-col items-center justify-center text-center space-y-4">
+          <div
+            onClick={handleRetry}
+            className="flex-1 p-6 flex flex-col items-center justify-center text-center space-y-4 cursor-pointer"
+          >
             <div className="w-16 h-16 rounded-full bg-red-950/80 border-2 border-red-400/70 flex items-center justify-center">
               <AlertTriangle className="w-8 h-8 text-red-400" />
             </div>
             <div>
               <h3 className="font-orbitron font-bold text-base text-white">
-                Ad Not Available, Try Again
+                No Ad Found - Tap To Retry
               </h3>
               <p className="text-xs text-slate-400 mt-1">
-                Unable to load rewarded video right now. Check your connection and retry.
+                Ad is still loading or temporarily unavailable. Tap below to retry.
               </p>
             </div>
             <button
               type="button"
-              onClick={handleRetry}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRetry();
+              }}
               className="px-5 py-2.5 rounded-xl bg-amber-400 text-black font-orbitron font-extrabold text-xs uppercase tracking-wider flex items-center space-x-1.5 cursor-pointer hover:brightness-110"
             >
               <RotateCcw className="w-4 h-4" />
-              <span>Retry</span>
+              <span>Tap To Retry</span>
             </button>
           </div>
         )}
@@ -245,9 +272,9 @@ export const AdModal: React.FC<AdModalProps> = ({
             <div className="flex items-center justify-between text-xs text-slate-400 font-mono px-1">
               <span>
                 {phase === 'loading'
-                  ? 'Preparing Rewarded Ad...'
+                  ? 'Ad Loading...'
                   : phase === 'error'
-                  ? 'Ad Load Failed'
+                  ? 'No Ad Found'
                   : `Watching Ad ${adStep} of ${totalAdSteps}...`}
               </span>
               <button

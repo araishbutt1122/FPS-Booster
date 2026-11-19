@@ -110,14 +110,73 @@ if (typeof window !== 'undefined') {
 // 2. REAL ADMOB ADS SYSTEM (NO TEST IDS, NO INTERSTITIALS)
 // ----------------------------------------------------
 export const ADMOB_CONFIG = {
-  BANNER_ID: 'ca-app-pub-8318388001860392/6314054415',
-  REWARDED_ID: 'ca-app-pub-8318388001860392/3823622447',
+  APP_ID: 'ca-app-pub-8318388001860392~2107076474',
+  BANNER_ID: 'ca-app-pub-8318388001860392/6387425197',
+  REWARDED_ID: 'ca-app-pub-8318388001860392/7176607732',
 };
 
+const AD_LOAD_TIMEOUT_MS = 5000;
 let isAdMobInitialized = false;
+let isRewardedAdReady = false;
+let preloadPromise = null;
 
 /**
- * 1. Initialize AdMob SDK on app start (NO interstitial / app open ads)
+ * Helper to wrap an async operation with a 5-second timeout so UI never hangs on "Ad Loading..."
+ */
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('AD_TIMEOUT'));
+    }, ms);
+    promise
+      .then((val) => {
+        clearTimeout(timer);
+        resolve(val);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+/**
+ * Preload Rewarded Ad so tapping any button opens the ad right away
+ */
+export async function preloadRewardedAd() {
+  if (!Capacitor.isNativePlatform()) return false;
+  if (isRewardedAdReady) return true;
+  if (preloadPromise) return preloadPromise;
+
+  preloadPromise = (async () => {
+    try {
+      if (!isAdMobInitialized) {
+        await AdMob.initialize({ initializeForTesting: false });
+        isAdMobInitialized = true;
+      }
+
+      await withTimeout(
+        AdMob.prepareRewardVideoAd({
+          adId: ADMOB_CONFIG.REWARDED_ID,
+          isTesting: false,
+        }),
+        AD_LOAD_TIMEOUT_MS
+      );
+      isRewardedAdReady = true;
+      return true;
+    } catch (err) {
+      isRewardedAdReady = false;
+      return false;
+    } finally {
+      preloadPromise = null;
+    }
+  })();
+
+  return preloadPromise;
+}
+
+/**
+ * 1. Initialize AdMob SDK & preload Rewarded Ad on app start
  */
 export async function initAds() {
   try {
@@ -128,6 +187,7 @@ export async function initAds() {
       await AdMob.initialize({ initializeForTesting: false });
       isAdMobInitialized = true;
     }
+    preloadRewardedAd();
   } catch (err) {
     console.log('AdMob Init notice:', err);
   }
@@ -175,7 +235,7 @@ function showToastMessage(msg) {
 }
 
 /**
- * Play a single real native Rewarded Ad and resolve only after actual reward/dismiss/failure
+ * Play a single real native Rewarded Ad (uses preloaded ad when ready, 5s timeout on load)
  */
 function playSingleNativeRewardedAd() {
   return new Promise(async (resolve) => {
@@ -196,7 +256,10 @@ function playSingleNativeRewardedAd() {
     const finish = async (result) => {
       if (settled) return;
       settled = true;
+      isRewardedAdReady = false;
       await cleanup();
+      // Preload next ad in background for next button click
+      preloadRewardedAd();
       resolve(result);
     };
 
@@ -225,11 +288,17 @@ function playSingleNativeRewardedAd() {
       });
       handles.push(hFailedShow);
 
-      await AdMob.prepareRewardVideoAd({
-        adId: ADMOB_CONFIG.REWARDED_ID,
-        isTesting: false,
-      });
+      if (!isRewardedAdReady) {
+        await withTimeout(
+          AdMob.prepareRewardVideoAd({
+            adId: ADMOB_CONFIG.REWARDED_ID,
+            isTesting: false,
+          }),
+          AD_LOAD_TIMEOUT_MS
+        );
+      }
 
+      isRewardedAdReady = false;
       await AdMob.showRewardVideoAd();
     } catch (err) {
       await finish({ status: 'failed', error: err });
@@ -238,7 +307,8 @@ function playSingleNativeRewardedAd() {
 }
 
 /**
- * 3. Show Rewarded Ad (Native Android uses real AdMob; Web Preview lets AdModal run interactive flow)
+ * 3. Show Rewarded Ad
+ * 1 Ad = 30 Min Boost, 2 Ads = 60 Min Boost, 3 Ads = 120 Min Boost
  */
 export async function showRewardedAd(type) {
   if (!Capacitor.isNativePlatform()) {
@@ -269,8 +339,9 @@ export async function showRewardedAd(type) {
       title = '120 Min Boost';
     }
 
-    showToastMessage('Loading Ad...');
-    await new Promise((r) => setTimeout(r, 1200));
+    if (!isRewardedAdReady) {
+      showToastMessage('Ad Loading...');
+    }
 
     for (let i = 1; i <= adsCount; i++) {
       if (i > 1) {
@@ -283,7 +354,7 @@ export async function showRewardedAd(type) {
         return { success: false, reason: 'skipped' };
       }
       if (result.status === 'failed') {
-        showToastMessage('Ad Not Available, Try Again');
+        showToastMessage('No Ad Found - Tap To Retry');
         return { success: false, reason: 'failed' };
       }
     }
@@ -304,7 +375,7 @@ export async function showRewardedAd(type) {
 
     return { success: true, boostMinutes, title };
   } catch (err) {
-    showToastMessage('Ad Not Available, Try Again');
+    showToastMessage('No Ad Found - Tap To Retry');
     return { success: false, reason: 'failed', error: err };
   }
 }
@@ -312,6 +383,7 @@ export async function showRewardedAd(type) {
 // Global window exposure
 if (typeof window !== 'undefined') {
   window['initAds'] = initAds;
+  window['preloadRewardedAd'] = preloadRewardedAd;
   window['showBanner'] = showBanner;
   window['hideBanner'] = hideBanner;
   window['showRewardedAd'] = showRewardedAd;

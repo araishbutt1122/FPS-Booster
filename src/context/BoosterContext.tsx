@@ -30,8 +30,8 @@ import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { updateRealStats } from '../app.js';
 
 // REAL ADMOB UNIT IDS (NO TEST IDS)
-export const BANNER_AD_ID = 'ca-app-pub-8318388001860392/6314054415';
-export const REWARDED_AD_ID = 'ca-app-pub-8318388001860392/3823622447';
+export const BANNER_AD_ID = 'ca-app-pub-8318388001860392/6387425197';
+export const REWARDED_AD_ID = 'ca-app-pub-8318388001860392/7176607732';
 
 // STRICT ONLY 3 PAYMENT DETAILS (AS REQUESTED)
 export const JAZZCASH_NUMBER = '03193191407';
@@ -295,7 +295,7 @@ const PACKAGES: ProPackage[] = [
   },
 ];
 
-// REWARD AD OPTIONS USING REAL REWARDED AD ID: ca-app-pub-8318388001860392/3823622447
+// REWARD AD OPTIONS USING REAL REWARDED AD ID: ca-app-pub-8318388001860392/7176607732
 const AD_OPTIONS: AdRewardOption[] = [
   { id: 'ad_30m_free', adsCount: 1, durationMinutes: 30, label: 'Watch Ad (60 FPS) = 30 Min Boost', badge: '1 AD', isRecommended: true },
   { id: 'ad_30m', adsCount: 1, durationMinutes: 30, label: 'Rewarded Ad (60 FPS) = 30 Min Boost', badge: '1 AD' },
@@ -369,7 +369,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [logs, setLogs] = useState<string[]>([
     'System ready: HyperGaming Engine 3.2 online',
     'Firebase Firestore initialized: Online sync connected',
-    'Real AdMob IDs active (ca-app-pub-8318388001860392)',
+    'Real AdMob IDs active (ca-app-pub-8318388001860392~2107076474)',
     'Payment Gateways: JazzCash, Easypaisa, Binance',
   ]);
 

@@ -49,6 +49,7 @@ export const RewardAdScreen: React.FC = () => {
         return;
       }
       if (res && res.reason === 'failed') {
+        setSnackBarMessage('No Ad Found - Tap To Retry');
         setNativeAdFailed(true);
         setCurrentAdStep(1);
         setIsPlayingAd(true);

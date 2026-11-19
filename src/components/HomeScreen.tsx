@@ -153,6 +153,7 @@ export const HomeScreen: React.FC = () => {
         return;
       }
       if (res && res.reason === 'failed') {
+        setSnackBarMessage('No Ad Found - Tap To Retry');
         setNativeAdFailed(true);
         setActiveAdTask({
           label,
