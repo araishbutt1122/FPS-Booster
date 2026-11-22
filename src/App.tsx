@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BoosterProvider, useBooster } from './context/BoosterContext.tsx';
 import { TopAppBar, BottomNavBar } from './components/Navigation.tsx';
 import { HomeScreen } from './components/HomeScreen.tsx';
@@ -9,20 +9,96 @@ import { SettingsScreen } from './components/SettingsScreen.tsx';
 import { PremiumPackageScreen } from './components/PremiumPackageScreen.tsx';
 import { RewardAdScreen } from './components/RewardAdScreen.tsx';
 import { PrivacyPolicyScreen } from './components/PrivacyPolicyScreen.tsx';
-import { BannerAd } from './components/BannerAd.tsx';
-import { 
+import {
   Smartphone, 
   Crown, 
   Zap, 
   Shield, 
   Flame, 
-  Maximize2
+  Maximize2,
+  AlertTriangle,
+  RotateCcw
 } from 'lucide-react';
 import { sound } from './utils/audio.ts';
+import { reportCrashToFirestore, auth } from './utils/firebase.ts';
+
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; errorMsg: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, errorMsg: '' };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, errorMsg: error?.message || 'Unexpected UI error' };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    reportCrashToFirestore({
+      id: `CRASH_${Date.now().toString(36)}`,
+      userId: auth.currentUser?.uid || 'anonymous',
+      message: error?.message || 'React ErrorBoundary Crash',
+      stack: `${error?.stack || ''}\n${info?.componentStack || ''}`,
+      screen: 'ErrorBoundary',
+      platform: 'react',
+      appVersion: 'v3.2.0',
+      createdAt: Date.now(),
+    });
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#030611] text-slate-100 flex items-center justify-center p-6">
+          <div className="max-w-sm w-full rounded-3xl bg-[#071129] border border-red-500/60 p-6 text-center space-y-4 shadow-2xl">
+            <div className="w-14 h-14 rounded-2xl bg-red-950 border border-red-500/50 flex items-center justify-center mx-auto text-red-400">
+              <AlertTriangle className="w-7 h-7" />
+            </div>
+            <h2 className="font-orbitron font-bold text-base text-white">
+              Session Recovery Triggered
+            </h2>
+            <p className="text-xs text-slate-300 font-mono">
+              Crash diagnostic logged safely: {this.state.errorMsg}
+            </p>
+            <button
+              onClick={() => this.setState({ hasError: false, errorMsg: '' })}
+              className="w-full py-3 rounded-2xl bg-cyan-500 text-black font-orbitron font-bold text-xs uppercase flex items-center justify-center space-x-2 cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>Restore App</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const MainAppContent: React.FC = () => {
-  const { currentScreen, setCurrentScreen, state } = useBooster();
+  const { currentScreen, setCurrentScreen, state, logCrashDiagnostic } = useBooster();
   const [deviceFrame, setDeviceFrame] = useState(true);
+
+  useEffect(() => {
+    const onWindowError = (event: ErrorEvent) => {
+      if (!event?.message) return;
+      logCrashDiagnostic(event.message, event.error?.stack, currentScreen);
+    };
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason =
+        event.reason instanceof Error ? event.reason.message : String(event.reason || 'Unhandled Rejection');
+      if (reason.includes('permission-denied')) return;
+      logCrashDiagnostic(reason, event.reason?.stack, currentScreen);
+    };
+    window.addEventListener('error', onWindowError);
+    window.addEventListener('unhandledrejection', onUnhandledRejection);
+    return () => {
+      window.removeEventListener('error', onWindowError);
+      window.removeEventListener('unhandledrejection', onUnhandledRejection);
+    };
+  }, [currentScreen]);
 
   const renderActiveScreen = () => {
     switch (currentScreen) {
@@ -124,7 +200,7 @@ const MainAppContent: React.FC = () => {
               currentScreen === 'reward_ad' ? 'bg-pink-500 text-white font-bold' : 'text-pink-400/80 hover:text-pink-300'
             }`}
           >
-            7. Ad Boost
+            7. Free Boost
           </button>
 
           {/* Toggle Device Frame / Fullscreen view */}
@@ -157,9 +233,6 @@ const MainAppContent: React.FC = () => {
           {renderActiveScreen()}
         </div>
 
-        {/* Banner Ad fixed at bottom above Bottom Navigation */}
-        <BannerAd />
-
         {/* Bottom Nav Bar (Monitor, Block Apps, Boost, PRO, Settings) */}
         <BottomNavBar />
       </main>
@@ -183,7 +256,7 @@ const MainAppContent: React.FC = () => {
         <span>•</span>
         <span className="flex items-center space-x-1 text-amber-400">
           <Crown className="w-3 h-3" />
-          <span>VIP Esports Performance • AdMob Boost</span>
+          <span>VIP Esports Performance • Instant Free Boost</span>
         </span>
       </footer>
     </div>
@@ -192,8 +265,10 @@ const MainAppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <BoosterProvider>
-      <MainAppContent />
-    </BoosterProvider>
+    <AppErrorBoundary>
+      <BoosterProvider>
+        <MainAppContent />
+      </BoosterProvider>
+    </AppErrorBoundary>
   );
 }

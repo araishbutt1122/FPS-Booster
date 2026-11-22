@@ -1,37 +1,57 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { 
-  BoosterState, 
-  ScreenType, 
-  FPSMode, 
-  AppBlockItem, 
-  GameItem, 
-  ProPackage, 
-  AdRewardOption, 
+import {
+  BoosterState,
+  ScreenType,
+  FPSMode,
+  AppBlockItem,
+  GameItem,
+  ProPackage,
+  AdRewardOption,
   TransactionProof,
   AdminWalletTransfer,
   AdminWalletStats,
   PaymentMethodType,
-  Language 
+  Language,
+  OptimizationProfileMode,
+  FirewallPresetMode,
+  FpsHistoryPoint,
+  CloudBackendState,
+  FirewallState,
+  DeviceCapabilitiesState,
+  NetworkDiagnosticsState,
+  SmartSessionState,
+  CrashDiagnosticItem,
+  PerformanceReportItem,
 } from '../types.ts';
 import { sound } from '../utils/audio.ts';
 import { RefreshRateDetector } from '../utils/fpsDetector.ts';
-import { 
-  ensureAnonymousAuth, 
-  syncUserToFirestore, 
-  submitPaymentToFirestore, 
-  approvePaymentInFirestore, 
+import {
+  ensureAnonymousAuth,
+  syncUserToFirestore,
+  submitPaymentToFirestore,
+  approvePaymentInFirestore,
   rejectPaymentInFirestore,
   uploadScreenshotToStorage,
+  measureFirestoreConnection,
+  fetchRemoteCloudConfig,
+  fetchRemoteOptimizationProfiles,
+  syncDeviceCompatibilityToFirestore,
+  reportCrashToFirestore,
+  savePerformanceReportToFirestore,
+  fetchUserPerformanceReports,
   db,
-  auth
 } from '../utils/firebase.ts';
+import {
+  OPTIMIZATION_PROFILES,
+  GamingFirewallNative,
+  isNativeAndroidRuntime,
+  queryDeviceCapabilities,
+  engageNativeProfile,
+} from '../utils/gamingEngine.ts';
+import { runNetworkSpeedDiagnostics } from '../utils/networkDiagnostics.ts';
 import { scanScreenshotForTid } from '../utils/ocr.ts';
-import { collection, doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { updateRealStats } from '../app.js';
-
-// REAL ADMOB UNIT IDS (NO TEST IDS)
-export const BANNER_AD_ID = 'ca-app-pub-8318388001860392/6387425197';
-export const REWARDED_AD_ID = 'ca-app-pub-8318388001860392/7176607732';
 
 // STRICT ONLY 3 PAYMENT DETAILS (AS REQUESTED)
 export const JAZZCASH_NUMBER = '03193191407';
@@ -135,7 +155,7 @@ interface BoosterContextType {
   setSnackBarMessage: (msg: string | null) => void;
   clearPaymentNotification: () => void;
 
-  // Unified Real-Time Ping Monitor
+  // Unified Real-Time Ping Monitor & Network Diagnostics
   serverRegions: ServerRegionPing[];
   selectedRegionId: string;
   activeRegion: ServerRegionPing;
@@ -143,7 +163,31 @@ interface BoosterContextType {
   lastProbedTime: string;
   runPingProbe: () => Promise<void>;
   selectPingRegion: (regionId: string) => void;
-  
+  networkDiagnostics: NetworkDiagnosticsState;
+  runFullNetworkDiagnostics: () => Promise<void>;
+
+  // 30-Min FPS History & Optimization Profiles
+  fpsHistory: FpsHistoryPoint[];
+  applyOptimizationProfile: (profile: OptimizationProfileMode, gamePkg?: string) => Promise<void>;
+
+  // Cloud Backend & Diagnostics
+  cloudBackend: CloudBackendState;
+  syncCloudBackend: () => Promise<void>;
+  deviceCapabilities: DeviceCapabilitiesState;
+  performanceReports: PerformanceReportItem[];
+  crashDiagnostics: CrashDiagnosticItem[];
+  logCrashDiagnostic: (message: string, stack?: string, screen?: string) => Promise<void>;
+  submitManualPerformanceSnapshot: () => Promise<void>;
+
+  // Local VPN Firewall & Smart Session
+  firewallState: FirewallState;
+  toggleFirewallMaster: () => Promise<void>;
+  requestFirewallVpnPermission: () => Promise<boolean>;
+  setProtectedGame: (game: GameItem) => Promise<void>;
+  applyFirewallPreset: (preset: FirewallPresetMode) => Promise<void>;
+  restorePreviousFirewallRules: () => Promise<void>;
+  smartSession: SmartSessionState;
+
   // Actions
   toggleGamingMode: () => void;
   setFpsMode: (mode: FPSMode) => void;
@@ -155,11 +199,11 @@ interface BoosterContextType {
   updateSetting: <K extends keyof BoosterState>(key: K, value: BoosterState[K]) => void;
   launchGameWithAutoBoost: (game: GameItem) => void;
   stopGamingMode: () => void;
-  
+
   // Direct Timer Boost
   startRewardBoost: (durationMinutes: number, targetFps?: FPSMode, label?: string) => void;
   tapToBoost: () => void;
-  
+
   // User Payment & Auto-Approval Logic (Firestore Synced)
   submitTransaction: (data: {
     packageId: string;
@@ -172,12 +216,12 @@ interface BoosterContextType {
     screenshotUrl?: string;
     screenshotName?: string;
     screenshotFile?: File;
-  }) => Promise<{ 
-    success: boolean; 
-    message: string; 
-    isMatched?: boolean; 
-    ocrTid?: string; 
-    reason?: string 
+  }) => Promise<{
+    success: boolean;
+    message: string;
+    isMatched?: boolean;
+    ocrTid?: string;
+    reason?: string;
   }>;
   approveTransaction: (id: string) => void;
   rejectTransaction: (id: string, reason?: string) => void;
@@ -281,7 +325,7 @@ const PACKAGES: ProPackage[] = [
     pricePkr: 800, 
     originalPricePkr: 1200, 
     isVip: true, 
-    perks: ['30 Days PRO Optimization', 'Vulkan Render Cache', 'Ad-Free Experience', '24/7 Gaming Support'] 
+    perks: ['30 Days PRO Optimization', 'Vulkan Render Cache', 'Priority Game Engine', '24/7 Gaming Support'] 
   },
   { 
     id: 'pkg_vip_599', 
@@ -291,16 +335,16 @@ const PACKAGES: ProPackage[] = [
     pricePkr: 999, 
     originalPricePkr: 1500,
     isVip: true, 
-    perks: ['Auto Ping Route Optimizer', 'Auto Boost On Launch', 'Ad-Free Experience', 'Priority Server Profiles'] 
+    perks: ['Auto Ping Route Optimizer', 'Auto Boost On Launch', 'Zero Latency Profiles', 'Priority Server Profiles'] 
   },
 ];
 
-// REWARD AD OPTIONS USING REAL REWARDED AD ID: ca-app-pub-8318388001860392/7176607732
+// FREE INSTANT BOOST TIMER OPTIONS (NO ADS REQUIRED)
 const AD_OPTIONS: AdRewardOption[] = [
-  { id: 'ad_30m_free', adsCount: 1, durationMinutes: 30, label: 'Watch Ad (60 FPS) = 30 Min Boost', badge: '1 AD', isRecommended: true },
-  { id: 'ad_30m', adsCount: 1, durationMinutes: 30, label: 'Rewarded Ad (60 FPS) = 30 Min Boost', badge: '1 AD' },
-  { id: 'ad_60m', adsCount: 2, durationMinutes: 60, label: 'Turbo Ad (90 FPS) = 60 Min Boost', badge: '2 ADS' },
-  { id: 'ad_120m', adsCount: 3, durationMinutes: 120, label: 'VIP Ad (Device Max FPS) = 120 Min Boost', badge: '3 ADS' },
+  { id: 'ad_30m_free', adsCount: 0, durationMinutes: 30, label: 'Quick Boost (60 FPS) • 30 Min Free', badge: 'RECOMMENDED', isRecommended: true },
+  { id: 'ad_30m', adsCount: 0, durationMinutes: 30, label: 'Power Boost (60 FPS) • 30 Min Free', badge: 'FREE' },
+  { id: 'ad_60m', adsCount: 0, durationMinutes: 60, label: 'Turbo Boost (90 FPS) • 60 Min Free', badge: 'FREE' },
+  { id: 'ad_120m', adsCount: 0, durationMinutes: 120, label: 'Extreme Boost (Device Max FPS) • 120 Min', badge: 'VIP FREE' },
 ];
 
 const BoosterContext = createContext<BoosterContextType | undefined>(undefined);
@@ -369,7 +413,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [logs, setLogs] = useState<string[]>([
     'System ready: HyperGaming Engine 3.2 online',
     'Firebase Firestore initialized: Online sync connected',
-    'Real AdMob IDs active (ca-app-pub-8318388001860392~2107076474)',
+    'Free Boost Mode: Instant one-tap booster active',
     'Payment Gateways: JazzCash, Easypaisa, Binance',
   ]);
 
@@ -384,6 +428,9 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
           parsed.proTier = 'free';
           parsed.proExpiresAt = null;
         }
+        if (!parsed.activeProfile) {
+          parsed.activeProfile = 'SMART_BOOST';
+        }
         return parsed;
       } catch {}
     }
@@ -391,6 +438,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       isGamingModeOn: false,
       isVpnActive: true,
       activeFps: '60',
+      activeProfile: 'SMART_BOOST',
       currentFps: 60,
       maxHardwareHz: 120,
       ramUsagePercent: 35,
@@ -421,6 +469,117 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   });
 
+  // 30-Minute FPS History State (D3.js telemetry series)
+  const [fpsHistory, setFpsHistory] = useState<FpsHistoryPoint[]>(() => {
+    try {
+      const raw = localStorage.getItem('fps_booster_fps_history_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw) as FpsHistoryPoint[];
+        const cutoff = Date.now() - 30 * 60 * 1000;
+        return parsed.filter((pt) => pt.timestamp >= cutoff);
+      }
+    } catch {}
+    return [
+      {
+        timestamp: Date.now() - 5000,
+        fps: 60,
+        targetFps: 60,
+        profile: 'SMART_BOOST',
+      },
+    ];
+  });
+
+  // Cloud Backend State (Genuine Firestore RTT + Config + Remote Profiles)
+  const [cloudBackend, setCloudBackend] = useState<CloudBackendState>({
+    status: 'checking',
+    rttMs: null,
+    lastSyncedAt: null,
+    remoteConfig: {
+      configVersion: 'v3.2.0',
+      minAppVersion: '2.4.0',
+      serviceStatus: 'operational',
+      updateTitle: '',
+      updateMessage: '',
+      hasImportantUpdate: false,
+      telemetryEnabled: true,
+      updatedAt: Date.now(),
+    },
+    remoteProfiles: OPTIMIZATION_PROFILES,
+    deviceTier: isNativeAndroidRuntime() ? 'COMPETITIVE' : 'WEB_PREVIEW',
+  });
+
+  // Device Capabilities State (ADPF, GameManager, Thermal, Display Hz)
+  const [deviceCapabilities, setDeviceCapabilities] = useState<DeviceCapabilitiesState>({
+    isNativeAndroid: isNativeAndroidRuntime(),
+    deviceModel: navigator.userAgent.includes('Android') ? 'Android WebView' : 'Browser Preview',
+    androidSdk: 0,
+    maxRefreshHz: 120,
+    supportedRefreshRates: [60, 90, 120],
+    cpuCores: navigator.hardwareConcurrency || 8,
+    cpuMaxClockMhz: 0,
+    thermalStatus: 'UNAVAILABLE',
+    thermalHeadroom: null,
+    adpfSupported: false,
+    gameModeApiSupported: false,
+    gameModeState: 'UNSUPPORTED',
+    vpnFirewallSupported: isNativeAndroidRuntime(),
+  });
+
+  // Local VPN Firewall State
+  const [firewallState, setFirewallState] = useState<FirewallState>(() => {
+    let savedSnapshotIds: string[] | null = null;
+    let savedSnapshotEnabled: boolean | null = null;
+    try {
+      const snapRaw = localStorage.getItem('fps_booster_firewall_snapshot_v1');
+      if (snapRaw) {
+        const snap = JSON.parse(snapRaw);
+        savedSnapshotIds = snap.blockedIds || null;
+        savedSnapshotEnabled = typeof snap.enabled === 'boolean' ? snap.enabled : null;
+      }
+    } catch {}
+    return {
+      enabled: state.isVpnActive,
+      hasVpnPermission: false,
+      isNativeAndroid: isNativeAndroidRuntime(),
+      preset: 'custom',
+      protectedGamePkg: 'com.tencent.ig',
+      protectedGameName: 'PUBG Mobile',
+      blockedBytesTotal: 0,
+      blockedPacketsCount: 0,
+      hasPreviousSnapshot: Boolean(savedSnapshotIds),
+      previousSnapshotBlockedIds: savedSnapshotIds,
+      previousSnapshotEnabled: savedSnapshotEnabled,
+    };
+  });
+
+  // Network Speed & Stability Diagnostics
+  const [networkDiagnostics, setNetworkDiagnostics] = useState<NetworkDiagnosticsState>({
+    pingMs: 58,
+    jitterMs: 1.4,
+    packetLossPercent: 0.0,
+    downloadMbps: 24.5,
+    uploadMbps: 10.2,
+    stabilityPercent: 98,
+    connectionType: 'WIFI',
+    isMeasuringSpeed: false,
+    lastDiagnosticsAt: null,
+  });
+
+  // 8-Step Smart Gaming Session State
+  const [smartSession, setSmartSession] = useState<SmartSessionState>({
+    isActive: false,
+    startedAt: null,
+    gameName: 'PUBG Mobile',
+    gamePackage: 'com.tencent.ig',
+    profileUsed: state.activeProfile || 'SMART_BOOST',
+    completedSteps: [],
+    peakTempC: state.temperatureC,
+    fpsSamples: [],
+  });
+
+  const [performanceReports, setPerformanceReports] = useState<PerformanceReportItem[]>([]);
+  const [crashDiagnostics, setCrashDiagnostics] = useState<CrashDiagnosticItem[]>([]);
+
   // FIREBASE INITIALIZATION & REAL-TIME FIRESTORE LISTENERS
   useEffect(() => {
     let unsubPayments: () => void;
@@ -440,6 +599,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
           isPro: state.isPro,
           proExpiry: state.proExpiresAt,
           activeFps: state.activeFps,
+          activeProfile: state.activeProfile,
         });
 
         // 1. Real-time User Profile Listener (PRO turns ON automatically across devices without refresh)
@@ -476,9 +636,9 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
           console.warn('Firestore user onSnapshot:', err);
         });
 
-        // 2. Real-time Payments Collection Listener (Live in Admin Panel & User side)
-        const paymentsColl = collection(db, 'payments');
-        unsubPayments = onSnapshot(paymentsColl, (snapshot) => {
+        // 2. Real-time Payments Collection Listener (Owner scoped under hardened rules)
+        const paymentsQuery = query(collection(db, 'payments'), where('userId', '==', activeUid));
+        unsubPayments = onSnapshot(paymentsQuery, (snapshot) => {
           const liveList: TransactionProof[] = [];
           snapshot.forEach(docSnap => {
             const d = docSnap.data();
@@ -723,7 +883,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setState(prev => {
         if (prev.boostTimeRemainingSec <= 1) {
           sound.playToggle(false);
-          setSnackBarMessage('Boost Ended - Watch Ad to Continue');
+          setSnackBarMessage('Boost Ended - Tap Boost to Restart');
           addLog('Boost Ended. Gaming Mode & FPS Target returned to Standby.');
           return {
             ...prev,
@@ -764,8 +924,8 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }));
 
     const displayLabel = label || `${mode} FPS Optimizer`;
-    setSnackBarMessage(`Boost Activated for ${durationMinutes} Min • Reward Earned`);
-    addLog(`Direct Boost: Started ${durationMinutes} Min session (${displayLabel}).`);
+    setSnackBarMessage(`Boost Activated for ${durationMinutes} Min ⚡`);
+    addLog(`Free Boost: Started ${durationMinutes} Min session (${displayLabel}).`);
 
     // Firestore Users Collection Sync: { name: "Test User", boost: "Done", time: current time }
     syncUserToFirestore({
@@ -806,6 +966,314 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     addLog('Data Save Ho Gaya');
   };
 
+  // Cloud Backend Health + Remote Config + Compatibility Sync
+  const syncCloudBackend = async () => {
+    setCloudBackend(prev => ({ ...prev, status: 'checking' }));
+    const conn = await measureFirestoreConnection();
+    const caps = await queryDeviceCapabilities(state.maxHardwareHz);
+    setDeviceCapabilities(caps);
+
+    const [remoteCfg, remoteProfs, reports] = await Promise.all([
+      fetchRemoteCloudConfig(),
+      fetchRemoteOptimizationProfiles(),
+      fetchUserPerformanceReports(userId),
+    ]);
+
+    const tier = await syncDeviceCompatibilityToFirestore(
+      userId,
+      caps,
+      state.totalRamGb || 4.0,
+      state.activeProfile
+    );
+
+    if (reports.length > 0) {
+      setPerformanceReports(reports);
+    }
+
+    setCloudBackend(prev => ({
+      status: conn.status,
+      rttMs: conn.rttMs,
+      lastSyncedAt: Date.now(),
+      errorMessage: conn.errorMessage,
+      remoteConfig: remoteCfg || prev.remoteConfig,
+      remoteProfiles: remoteProfs.length > 0 ? remoteProfs : OPTIMIZATION_PROFILES,
+      deviceTier: tier,
+    }));
+  };
+
+  useEffect(() => {
+    syncCloudBackend();
+  }, [userId]);
+
+  // Network Speed & Stability Diagnostics
+  const runFullNetworkDiagnostics = async () => {
+    setNetworkDiagnostics(prev => ({ ...prev, isMeasuringSpeed: true }));
+    const region = serverRegions.find(r => r.id === selectedRegionId) || serverRegions[0];
+    const diag = await runNetworkSpeedDiagnostics(region.url, region.currentPingMs);
+    setNetworkDiagnostics(diag);
+    addLog(`Network Diagnostics: ${diag.downloadMbps}↓ / ${diag.uploadMbps}↑ Mbps, Stability ${diag.stabilityPercent}%`);
+  };
+
+  useEffect(() => {
+    runFullNetworkDiagnostics();
+  }, []);
+
+  // Poll Native Firewall stats when on Android
+  useEffect(() => {
+    if (!isNativeAndroidRuntime()) return;
+    const pollFirewall = async () => {
+      try {
+        const status = await GamingFirewallNative.getFirewallStatus();
+        setFirewallState(prev => ({
+          ...prev,
+          isNativeAndroid: true,
+          hasVpnPermission: status.permissionGranted,
+          enabled: status.isVpnRunning,
+          blockedBytesTotal: status.blockedBytes || 0,
+          blockedPacketsCount: status.blockedPackets || 0,
+        }));
+      } catch {}
+    };
+    pollFirewall();
+    const iv = setInterval(pollFirewall, 4000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Append live FPS sample into 30-minute D3 history buffer every 5 seconds
+  const latestStateRef = useRef(state);
+  latestStateRef.current = state;
+  useEffect(() => {
+    const recordSample = () => {
+      const cur = latestStateRef.current;
+      const point: FpsHistoryPoint = {
+        timestamp: Date.now(),
+        fps: cur.currentFps,
+        targetFps: Number(cur.activeFps) || 60,
+        profile: cur.activeProfile || 'SMART_BOOST',
+      };
+      setFpsHistory(prev => {
+        const cutoff = Date.now() - 30 * 60 * 1000;
+        const next = [...prev.filter(p => p.timestamp >= cutoff), point].slice(-360);
+        try {
+          localStorage.setItem('fps_booster_fps_history_v1', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+      setSmartSession(prev => {
+        if (!prev.isActive) return prev;
+        return {
+          ...prev,
+          peakTempC: Math.max(prev.peakTempC, cur.temperatureC),
+          fpsSamples: [...prev.fpsSamples.slice(-119), cur.currentFps],
+        };
+      });
+    };
+
+    recordSample();
+    const iv = setInterval(recordSample, 5000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Apply Optimization Profile (5 modes + native ADPF/GameManager/refresh-rate bridge)
+  const applyOptimizationProfile = async (profileId: OptimizationProfileMode, gamePkg?: string) => {
+    sound.playBoost();
+    const profileSpec =
+      cloudBackend.remoteProfiles.find(p => p.id === profileId) ||
+      OPTIMIZATION_PROFILES.find(p => p.id === profileId) ||
+      OPTIMIZATION_PROFILES[0];
+
+    setState(prev => ({
+      ...prev,
+      activeProfile: profileSpec.id,
+      activeFps: profileSpec.targetFps,
+      performanceMode: profileSpec.performanceMode,
+      reduceLag: profileSpec.reduceLag,
+      improveRendering: profileSpec.improveRendering,
+      graphicsOptimized: profileSpec.graphicsOptimized,
+      isGamingModeOn: true,
+    }));
+
+    const nativeRes = await engageNativeProfile(
+      profileSpec.id,
+      Number(profileSpec.targetFps),
+      gamePkg || firewallState.protectedGamePkg
+    );
+
+    addLog(
+      `Profile Active: ${profileSpec.name} (${profileSpec.targetFps} FPS${nativeRes.adpfEngaged ? ', ADPF Engaged' : ''})`
+    );
+    setSnackBarMessage(`${profileSpec.name} Engaged (${profileSpec.targetFps} FPS Target)`);
+    syncUserToFirestore({
+      userId,
+      name: 'Test User',
+      isPro: state.isPro,
+      proExpiry: state.proExpiresAt,
+      activeFps: profileSpec.targetFps,
+      activeProfile: profileSpec.id,
+    });
+  };
+
+  // Crash Diagnostic Helper (used by App ErrorBoundary & Settings diagnostic test)
+  const logCrashDiagnostic = async (message: string, stack?: string, screenName?: string) => {
+    const item: CrashDiagnosticItem = {
+      id: `CRASH_${Date.now().toString(36)}`,
+      userId,
+      message: message.slice(0, 500),
+      stack: stack ? stack.slice(0, 2000) : undefined,
+      screen: screenName || currentScreen,
+      platform: isNativeAndroidRuntime() ? 'android' : 'web',
+      appVersion: cloudBackend.remoteConfig.configVersion || 'v3.2.0',
+      createdAt: Date.now(),
+    };
+    setCrashDiagnostics(prev => [item, ...prev.slice(0, 14)]);
+    await reportCrashToFirestore(item);
+  };
+
+  // Save a snapshot report cleanly on demand
+  const submitManualPerformanceSnapshot = async () => {
+    const samples = fpsHistory.slice(-20).map(p => p.fps);
+    const avg = samples.length ? Math.round(samples.reduce((s, v) => s + v, 0) / samples.length) : state.currentFps;
+    const min = samples.length ? Math.min(...samples) : state.currentFps;
+    const max = samples.length ? Math.max(...samples) : state.currentFps;
+    const report: PerformanceReportItem = {
+      id: `PERF_${Date.now().toString(36)}`,
+      userId,
+      gameName: activeGame?.name || firewallState.protectedGameName || 'Manual Diagnostics',
+      profileMode: state.activeProfile,
+      avgFps: avg,
+      minFps: min,
+      maxFps: max,
+      avgPingMs: activeRegion.currentPingMs,
+      packetLossPercent: networkDiagnostics.packetLossPercent,
+      peakTempC: state.temperatureC,
+      blockedAppsCount: appsList.filter(a => a.isBlocked).length,
+      durationSec: smartSession.startedAt ? Math.round((Date.now() - smartSession.startedAt) / 1000) : 60,
+      createdAt: Date.now(),
+    };
+    const ok = await savePerformanceReportToFirestore(report);
+    setPerformanceReports(prev => [report, ...prev.slice(0, 9)]);
+    setSnackBarMessage(ok ? 'Performance Report Synced to Cloud!' : 'Performance Report Saved Locally');
+  };
+
+  // Firewall Controls: Permission, Save/Restore, Master ON/OFF, Protected Game, Auto Presets
+  const saveFirewallSnapshotInternal = async () => {
+    const blockedIds = appsList.filter(a => a.isBlocked).map(a => a.id);
+    try {
+      localStorage.setItem(
+        'fps_booster_firewall_snapshot_v1',
+        JSON.stringify({ blockedIds, enabled: firewallState.enabled })
+      );
+    } catch {}
+    setFirewallState(prev => ({
+      ...prev,
+      hasPreviousSnapshot: true,
+      previousSnapshotBlockedIds: blockedIds,
+      previousSnapshotEnabled: prev.enabled,
+    }));
+    if (isNativeAndroidRuntime()) {
+      try {
+        await GamingFirewallNative.savePreviousConfig();
+      } catch {}
+    }
+  };
+
+  const requestFirewallVpnPermission = async (): Promise<boolean> => {
+    if (!isNativeAndroidRuntime()) {
+      setSnackBarMessage('Android APK required for system VpnService permission');
+      return false;
+    }
+    try {
+      const res = await GamingFirewallNative.requestVpnPermission();
+      setFirewallState(prev => ({ ...prev, hasVpnPermission: res.granted }));
+      setSnackBarMessage(res.granted ? 'VPN Firewall Permission Granted!' : 'VPN Permission Cancelled');
+      return res.granted;
+    } catch {
+      return false;
+    }
+  };
+
+  const syncFirewallRulesToNative = async (nextEnabled: boolean, blockedPkgs: string[], gamePkg: string) => {
+    if (!isNativeAndroidRuntime()) return;
+    try {
+      if (nextEnabled) {
+        const res = await GamingFirewallNative.startFirewall({
+          blockedPackages: blockedPkgs,
+          protectedGamePackage: gamePkg,
+        });
+        if (res.needsPermission) {
+          setSnackBarMessage('Grant Android VPN Permission to activate firewall tunnel');
+        }
+      } else {
+        await GamingFirewallNative.stopFirewall();
+      }
+    } catch {}
+  };
+
+  const toggleFirewallMaster = async () => {
+    sound.playShield();
+    const nextEnabled = !firewallState.enabled;
+    const blockedPkgs = appsList.filter(a => a.isBlocked).map(a => a.packageName);
+    setState(prev => ({ ...prev, isVpnActive: nextEnabled }));
+    setFirewallState(prev => ({ ...prev, enabled: nextEnabled }));
+    await syncFirewallRulesToNative(nextEnabled, blockedPkgs, firewallState.protectedGamePkg);
+    addLog(nextEnabled ? `Local VPN Firewall ENABLED (${blockedPkgs.length} apps blocked)` : 'Local VPN Firewall PAUSED');
+    setSnackBarMessage(nextEnabled ? 'Local VPN Firewall ON' : 'Local VPN Firewall OFF');
+  };
+
+  const setProtectedGame = async (game: GameItem) => {
+    sound.playClick();
+    setFirewallState(prev => ({
+      ...prev,
+      protectedGamePkg: game.packageName,
+      protectedGameName: game.name,
+    }));
+    const blockedPkgs = appsList.filter(a => a.isBlocked && a.packageName !== game.packageName).map(a => a.packageName);
+    await syncFirewallRulesToNative(firewallState.enabled, blockedPkgs, game.packageName);
+    setSnackBarMessage(`Protected Game Internet: ${game.name}`);
+  };
+
+  const applyFirewallPreset = async (preset: FirewallPresetMode) => {
+    sound.playShield();
+    await saveFirewallSnapshotInternal();
+    let nextApps = appsList;
+    if (preset === 'esports_strict') {
+      // Block all heavy media, video, cloud sync & social except essential calls/games
+      nextApps = appsList.map(app => ({ ...app, isBlocked: true }));
+    } else if (preset === 'social_keep') {
+      // Allow WhatsApp, Messenger, Telegram, Phone-friendly chat; block video streaming & cloud backup
+      const allowIds = new Set(['WhatsApp', 'Messenger', 'Telegram']);
+      nextApps = appsList.map(app => ({ ...app, isBlocked: !allowIds.has(app.name) }));
+    }
+    setAppsList(nextApps);
+    setState(prev => ({ ...prev, isVpnActive: true }));
+    setFirewallState(prev => ({ ...prev, enabled: true, preset }));
+    const blockedPkgs = nextApps.filter(a => a.isBlocked).map(a => a.packageName);
+    await syncFirewallRulesToNative(true, blockedPkgs, firewallState.protectedGamePkg);
+    addLog(`Firewall Preset Applied: ${preset.toUpperCase()} (${blockedPkgs.length} apps restricted)`);
+    setSnackBarMessage(`Applied ${preset === 'esports_strict' ? 'Esports Strict' : 'Keep Chat / Block Media'} Profile`);
+  };
+
+  const restorePreviousFirewallRules = async () => {
+    sound.playClick();
+    if (!firewallState.previousSnapshotBlockedIds) {
+      setSnackBarMessage('No previous firewall snapshot stored yet');
+      return;
+    }
+    const prevBlockedSet = new Set(firewallState.previousSnapshotBlockedIds);
+    const restoredApps = appsList.map(app => ({ ...app, isBlocked: prevBlockedSet.has(app.id) }));
+    const restoredEnabled = firewallState.previousSnapshotEnabled ?? false;
+    setAppsList(restoredApps);
+    setState(prev => ({ ...prev, isVpnActive: restoredEnabled }));
+    setFirewallState(prev => ({ ...prev, enabled: restoredEnabled, preset: 'custom' }));
+    if (isNativeAndroidRuntime()) {
+      try {
+        await GamingFirewallNative.restorePreviousConfig();
+      } catch {}
+    }
+    addLog('Restored previous firewall rules safely.');
+    setSnackBarMessage('Previous Firewall Config Restored');
+  };
+
   const toggleGamingMode = () => {
     sound.playToggle(!state.isGamingModeOn);
     setState(prev => {
@@ -820,37 +1288,43 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const setFpsMode = (mode: FPSMode) => {
     sound.playClick();
-    if (mode === '120' && !state.isPro && !state.isBoosting) {
-      setCurrentScreen('premium');
-      return;
-    }
     setState(prev => ({ ...prev, activeFps: mode }));
     setSnackBarMessage(`${mode} FPS Selected`);
   };
 
   const toggleAppBlock = (id: string) => {
     sound.playClick();
-    setAppsList(prev => prev.map(app => {
-      if (app.id === id) {
-        const next = !app.isBlocked;
-        addLog(next ? `VPN: Blocked background data for ${app.name}` : `VPN: Allowed background data for ${app.name}`);
-        return { ...app, isBlocked: next };
-      }
-      return app;
-    }));
+    setAppsList(prev => {
+      const updated = prev.map(app => {
+        if (app.id === id) {
+          const next = !app.isBlocked;
+          addLog(next ? `VPN: Blocked background data for ${app.name}` : `VPN: Allowed background data for ${app.name}`);
+          return { ...app, isBlocked: next };
+        }
+        return app;
+      });
+      const blockedPkgs = updated.filter(a => a.isBlocked).map(a => a.packageName);
+      syncFirewallRulesToNative(firewallState.enabled, blockedPkgs, firewallState.protectedGamePkg);
+      return updated;
+    });
   };
 
   const toggleAllAppsBlock = (blockAll: boolean) => {
     sound.playShield();
-    setAppsList(prev => prev.map(app => ({ ...app, isBlocked: blockAll })));
+    const updated = appsList.map(app => ({ ...app, isBlocked: blockAll }));
+    setAppsList(updated);
+    const blockedPkgs = updated.filter(a => a.isBlocked).map(a => a.packageName);
+    syncFirewallRulesToNative(firewallState.enabled, blockedPkgs, firewallState.protectedGamePkg);
     addLog(blockAll ? 'VPN: All background apps blocked from network access' : 'VPN: All apps network access unblocked');
   };
 
   const applyVpnFirewall = () => {
     sound.playShield();
     setState(prev => ({ ...prev, isVpnActive: true }));
-    const blockedCount = appsList.filter(a => a.isBlocked).length;
-    addLog(`Block VPN Firewall engaged: ${blockedCount} apps restricted to 0 KB/s`);
+    setFirewallState(prev => ({ ...prev, enabled: true }));
+    const blockedPkgs = appsList.filter(a => a.isBlocked).map(a => a.packageName);
+    syncFirewallRulesToNative(true, blockedPkgs, firewallState.protectedGamePkg);
+    addLog(`Block VPN Firewall engaged: ${blockedPkgs.length} apps restricted to 0 KB/s`);
   };
 
   const cleanRam = () => {
@@ -880,25 +1354,77 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setState(prev => ({ ...prev, [key]: value }));
   };
 
-  const launchGameWithAutoBoost = (game: GameItem) => {
+  // 8-Step Smart Gaming Session Launcher
+  const launchGameWithAutoBoost = async (game: GameItem) => {
     sound.playBoost();
+    // Step 1: Detect selected game
     setActiveGame(game);
+    setFirewallState(prev => ({
+      ...prev,
+      protectedGamePkg: game.packageName,
+      protectedGameName: game.name,
+    }));
+
+    // Step 2: Apply selected optimization profile
+    await applyOptimizationProfile(state.activeProfile, game.packageName);
+
+    // Step 3 & 4: Save snapshot, activate firewall, keep selected game unrestricted
+    await saveFirewallSnapshotInternal();
     if (state.autoBoostOnGameLaunch) {
       applyVpnFirewall();
       cleanRam();
     }
+
+    // Step 5 & 6: Begin temperature/FPS monitoring & run live network diagnostics
+    setSmartSession({
+      isActive: true,
+      startedAt: Date.now(),
+      gameName: game.name,
+      gamePackage: game.packageName,
+      profileUsed: state.activeProfile,
+      completedSteps: [1, 2, 3, 4, 5, 6],
+      peakTempC: state.temperatureC,
+      fpsSamples: [state.currentFps],
+    });
+    runFullNetworkDiagnostics();
+
     setState(prev => ({ ...prev, isGamingModeOn: true, isBoosting: true }));
     setCurrentScreen('dashboard');
-    addLog(`Launched ${game.name} (${game.packageName}) in Ultra High Priority Mode!`);
+    addLog(`Smart Session Active: ${game.name} (${game.packageName}) • Profile ${state.activeProfile}`);
   };
 
-  const stopGamingMode = () => {
+  // End Session safely -> Upload Cloud Performance Report (Step 7) & Restore Firewall (Step 8)
+  const stopGamingMode = async () => {
     sound.playToggle(false);
+    if (smartSession.isActive) {
+      const samples = smartSession.fpsSamples.length > 0 ? smartSession.fpsSamples : [state.currentFps];
+      const avgFps = Math.round(samples.reduce((s, v) => s + v, 0) / samples.length);
+      const report: PerformanceReportItem = {
+        id: `PERF_${Date.now().toString(36)}`,
+        userId,
+        gameName: smartSession.gameName,
+        profileMode: smartSession.profileUsed,
+        avgFps,
+        minFps: Math.min(...samples),
+        maxFps: Math.max(...samples),
+        avgPingMs: activeRegion.currentPingMs,
+        packetLossPercent: networkDiagnostics.packetLossPercent,
+        peakTempC: Math.max(smartSession.peakTempC, state.temperatureC),
+        blockedAppsCount: appsList.filter(a => a.isBlocked).length,
+        durationSec: smartSession.startedAt ? Math.max(1, Math.round((Date.now() - smartSession.startedAt) / 1000)) : 30,
+        createdAt: Date.now(),
+      };
+      setPerformanceReports(prev => [report, ...prev.slice(0, 9)]);
+      await savePerformanceReportToFirestore(report);
+      await restorePreviousFirewallRules();
+      setSmartSession(prev => ({ ...prev, isActive: false, completedSteps: [1, 2, 3, 4, 5, 6, 7, 8] }));
+    }
+
     setActiveGame(null);
     setState(prev => ({ ...prev, isGamingModeOn: false, isBoosting: false, activeFps: '60' }));
     setCurrentScreen('home');
-    setSnackBarMessage('Gaming Mode Stopped');
-    addLog('Gaming session completed. Background restrictions relieved.');
+    setSnackBarMessage('Session Ended • Report Synced & Firewall Restored');
+    addLog('Gaming session completed. Performance report saved & previous firewall rules restored.');
   };
 
   // ONLINE FIRESTORE PAYMENT SUBMISSION WITH TASK 3 AUTO-MATCH OCR LOGIC
@@ -1201,6 +1727,24 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         lastProbedTime,
         runPingProbe,
         selectPingRegion,
+        networkDiagnostics,
+        runFullNetworkDiagnostics,
+        fpsHistory,
+        applyOptimizationProfile,
+        cloudBackend,
+        syncCloudBackend,
+        deviceCapabilities,
+        performanceReports,
+        crashDiagnostics,
+        logCrashDiagnostic,
+        submitManualPerformanceSnapshot,
+        firewallState,
+        toggleFirewallMaster,
+        requestFirewallVpnPermission,
+        setProtectedGame,
+        applyFirewallPreset,
+        restorePreviousFirewallRules,
+        smartSession,
         toggleGamingMode,
         setFpsMode,
         toggleAppBlock,

@@ -32,6 +32,11 @@
           "description": "Active FPS mode (60, 90, 120)",
           "enum": ["60", "90", "120"]
         },
+        "activeProfile": {
+          "type": "string",
+          "description": "Active optimization profile",
+          "enum": ["SMART_BOOST", "PERFORMANCE_MODE", "EXTREME_MODE", "BALANCED_MODE", "BATTERY_SAVER"]
+        },
         "lastBoostTime": {
           "type": "string",
           "description": "Timestamp string of last boost"
@@ -116,6 +121,95 @@
         }
       },
       "required": ["totalEarnings", "todayEarnings", "totalProUsers"]
+    },
+    "RemoteConfig": {
+      "title": "RemoteConfig",
+      "description": "Cloud backend configuration, update notices, and server status",
+      "type": "object",
+      "properties": {
+        "configVersion": { "type": "string", "maxLength": 32 },
+        "minAppVersion": { "type": "string", "maxLength": 32 },
+        "serviceStatus": { "type": "string", "enum": ["operational", "degraded", "maintenance"] },
+        "updateTitle": { "type": "string", "maxLength": 120 },
+        "updateMessage": { "type": "string", "maxLength": 300 },
+        "hasImportantUpdate": { "type": "boolean" },
+        "telemetryEnabled": { "type": "boolean" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["configVersion", "serviceStatus", "hasImportantUpdate"]
+    },
+    "OptimizationProfile": {
+      "title": "OptimizationProfile",
+      "description": "Remote gaming optimization preset profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 48 },
+        "name": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "maxLength": 200 },
+        "targetFps": { "type": "string", "enum": ["60", "90", "120"] },
+        "performanceMode": { "type": "boolean" },
+        "reduceLag": { "type": "boolean" },
+        "improveRendering": { "type": "boolean" },
+        "graphicsOptimized": { "type": "boolean" },
+        "thermalCapC": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "name", "targetFps"]
+    },
+    "DeviceCompatibility": {
+      "title": "DeviceCompatibility",
+      "description": "Device hardware capability and compatibility record",
+      "type": "object",
+      "properties": {
+        "deviceId": { "type": "string", "maxLength": 128 },
+        "deviceName": { "type": "string", "maxLength": 128 },
+        "maxSupportedHz": { "type": "number" },
+        "totalRamGb": { "type": "number" },
+        "adpfSupported": { "type": "boolean" },
+        "gameModeApiSupported": { "type": "boolean" },
+        "vpnFirewallSupported": { "type": "boolean" },
+        "recommendedProfile": { "type": "string", "maxLength": 48 },
+        "compatibilityTier": { "type": "string", "enum": ["FLAGSHIP", "COMPETITIVE", "STANDARD", "WEB_PREVIEW"] },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["deviceId", "deviceName", "maxSupportedHz", "compatibilityTier"]
+    },
+    "CrashDiagnostic": {
+      "title": "CrashDiagnostic",
+      "description": "Client runtime error or crash diagnostic record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "message": { "type": "string", "maxLength": 500 },
+        "stack": { "type": "string", "maxLength": 2000 },
+        "screen": { "type": "string", "maxLength": 48 },
+        "platform": { "type": "string", "maxLength": 32 },
+        "appVersion": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "userId", "message", "createdAt"]
+    },
+    "PerformanceReport": {
+      "title": "PerformanceReport",
+      "description": "Gaming session performance telemetry summary report",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "gameName": { "type": "string", "maxLength": 80 },
+        "profileMode": { "type": "string", "maxLength": 48 },
+        "avgFps": { "type": "number" },
+        "minFps": { "type": "number" },
+        "maxFps": { "type": "number" },
+        "avgPingMs": { "type": "number" },
+        "packetLossPercent": { "type": "number" },
+        "peakTempC": { "type": "number" },
+        "blockedAppsCount": { "type": "number" },
+        "durationSec": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "userId", "gameName", "profileMode", "avgFps", "createdAt"]
     }
   },
   "firestore": {
@@ -130,6 +224,26 @@
     "/admin/stats": {
       "schema": { "$ref": "AdminStats" },
       "description": "Aggregated wallet stats"
+    },
+    "/cloudConfig/{configId}": {
+      "schema": { "$ref": "RemoteConfig" },
+      "description": "Remote configuration updates and health status"
+    },
+    "/optimizationProfiles/{profileId}": {
+      "schema": { "$ref": "OptimizationProfile" },
+      "description": "Server-managed optimization profiles"
+    },
+    "/deviceProfiles/{deviceId}": {
+      "schema": { "$ref": "DeviceCompatibility" },
+      "description": "Device hardware compatibility database"
+    },
+    "/crashReports/{reportId}": {
+      "schema": { "$ref": "CrashDiagnostic" },
+      "description": "Application crash diagnostics"
+    },
+    "/performanceReports/{reportId}": {
+      "schema": { "$ref": "PerformanceReport" },
+      "description": "Gaming session performance reports"
     }
   }
 }

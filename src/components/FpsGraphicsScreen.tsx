@@ -13,14 +13,17 @@ import {
 } from 'lucide-react';
 import { useBooster } from '../context/BoosterContext.tsx';
 import { sound } from '../utils/audio.ts';
-import { FPSMode } from '../types.ts';
+import { FPSMode, OptimizationProfileMode } from '../types.ts';
+import { OPTIMIZATION_PROFILES } from '../utils/gamingEngine.ts';
 
 export const FpsGraphicsScreen: React.FC = () => {
   const { 
     state, 
     setFpsMode, 
     applyGraphicsSettings, 
-    setCurrentScreen 
+    setCurrentScreen,
+    deviceCapabilities,
+    applyOptimizationProfile,
   } = useBooster();
 
   const [selectedFps, setSelectedFps] = useState<FPSMode>(state.activeFps);
@@ -55,7 +58,7 @@ export const FpsGraphicsScreen: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 pb-20 pt-1 space-y-4">
+    <div className="flex-1 overflow-y-auto px-4 pb-6 pt-1 space-y-4">
       {/* Toast Notification */}
       {appliedToast && (
         <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-cyan-900 border border-cyan-400 text-white px-5 py-2.5 rounded-full text-xs font-bold shadow-2xl shadow-cyan-950 flex items-center space-x-2 animate-bounce">
@@ -96,6 +99,40 @@ export const FpsGraphicsScreen: React.FC = () => {
 
         {/* Ambient background glow */}
         <div className="absolute -bottom-10 -right-10 w-36 h-36 bg-cyan-500/20 rounded-full blur-2xl pointer-events-none" />
+      </div>
+
+      {/* Android Performance Framework (ADPF) & Optimization Profile Selector */}
+      <div className="bg-[#071129]/90 border border-cyan-900/60 rounded-2xl p-3 space-y-2">
+        <div className="flex items-center justify-between flex-wrap gap-1 text-[10px] font-mono">
+          <span className="text-cyan-300 font-bold">
+            ENGINE: {deviceCapabilities.adpfSupported ? 'ADPF Hint Active' : 'Web Frame Pacing'}
+          </span>
+          <span className="text-emerald-300">
+            GameMode: {deviceCapabilities.gameModeState} • Thermal: {deviceCapabilities.thermalStatus}
+          </span>
+        </div>
+        <div className="flex items-center space-x-1.5 overflow-x-auto pb-0.5">
+          {OPTIMIZATION_PROFILES.map((p) => {
+            const selected = state.activeProfile === p.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  applyOptimizationProfile(p.id as OptimizationProfileMode);
+                  setSelectedFps(p.targetFps);
+                }}
+                className={`px-2.5 py-1 rounded-xl border text-[10px] font-mono font-bold whitespace-nowrap cursor-pointer shrink-0 ${
+                  selected
+                    ? 'bg-cyan-500 text-black border-cyan-300'
+                    : 'bg-[#040c1f] text-slate-300 border-slate-800 hover:border-cyan-700'
+                }`}
+              >
+                {p.name}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* FPS Mode Selection Section */}

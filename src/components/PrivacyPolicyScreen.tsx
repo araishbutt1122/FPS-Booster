@@ -15,7 +15,7 @@ export const PrivacyPolicyScreen: React.FC = () => {
   const { setCurrentScreen } = useBooster();
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 pb-20 pt-2 space-y-4 text-slate-200">
+    <div className="flex-1 overflow-y-auto px-4 pb-6 pt-2 space-y-4 text-slate-200">
       {/* Header with back button */}
       <div className="flex items-center space-x-2.5 pb-2 border-b border-cyan-900/60">
         <button

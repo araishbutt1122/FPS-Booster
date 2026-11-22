@@ -17,19 +17,11 @@ import {
   RotateCcw,
   KeyRound
 } from 'lucide-react';
-import { useBooster, REWARDED_AD_ID } from '../context/BoosterContext.tsx';
+import { useBooster } from '../context/BoosterContext.tsx';
 import { sound } from '../utils/audio.ts';
-import { FPSMode } from '../types.ts';
-import { AdModal } from './AdModal.tsx';
+import { FPSMode, OptimizationProfileMode } from '../types.ts';
+import { OPTIMIZATION_PROFILES } from '../utils/gamingEngine.ts';
 import { AdminPanel } from './AdminPanel.tsx';
-
-interface PendingAdTask {
-  targetFps?: FPSMode;
-  label: string;
-  durationMinutes: number;
-  totalAdsNeeded: number;
-  currentAdIndex: number;
-}
 
 export const HomeScreen: React.FC = () => {
   const { 
@@ -42,12 +34,15 @@ export const HomeScreen: React.FC = () => {
     userPaymentNotification,
     clearPaymentNotification,
     snackBarMessage,
-    setSnackBarMessage
+    setSnackBarMessage,
+    applyOptimizationProfile,
+    cloudBackend,
+    gamesList,
+    launchGameWithAutoBoost,
   } = useBooster();
 
   const [isBoostingAnim, setIsBoostingAnim] = useState(false);
   const [ramNotification, setRamNotification] = useState<string | null>(null);
-  const [activeAdTask, setActiveAdTask] = useState<PendingAdTask | null>(null);
 
   // Hidden 5-tap logo admin trigger
   const [showAdminPinModal, setShowAdminPinModal] = useState(false);
@@ -86,129 +81,43 @@ export const HomeScreen: React.FC = () => {
     }
   };
 
-  const [nativeAdFailed, setNativeAdFailed] = useState(false);
-
-  // TAP TO BOOST
+  // TAP TO BOOST - INSTANT FREE BOOST (NO ADS)
   const handleCenterBoostClick = () => {
-    sound.playClick();
+    sound.playBoost();
     setIsBoostingAnim(true);
-
-    if (state.isPro) {
-      sound.playBoost();
-      const { freedMb } = cleanRam();
-      tapToBoost();
-      setRamNotification(`PRO Turbo Boosted! Freed ${freedMb}MB RAM`);
-      setTimeout(() => setIsBoostingAnim(false), 1200);
-      setTimeout(() => setRamNotification(null), 3500);
-      return;
-    }
-
-    if (state.isBoosting) {
-      sound.playBoost();
-      const { freedMb } = cleanRam();
-      tapToBoost();
-      setRamNotification(`Turbo Cleaned! Freed ${freedMb}MB RAM`);
-      setTimeout(() => setIsBoostingAnim(false), 1200);
-      setTimeout(() => setRamNotification(null), 3500);
-      return;
-    }
-
-    // Trigger 1 Rewarded Ad to start 30 Min boost
-    setIsBoostingAnim(false);
-    startDirectAdTask(30, 1, 'Watch Ad - Get Free Boost (30 Min)');
+    const { freedMb } = cleanRam();
+    tapToBoost();
+    setRamNotification(
+      state.isPro
+        ? `PRO Turbo Boosted! Freed ${freedMb}MB RAM`
+        : `Free Boost Activated! Freed ${freedMb}MB RAM`
+    );
+    setTimeout(() => setIsBoostingAnim(false), 1200);
+    setTimeout(() => setRamNotification(null), 3500);
   };
 
-  // 3 FPS CARDS CLICK LOGIC
+  // 3 FPS CARDS CLICK LOGIC - INSTANT FREE ACTIVATION
   const handleFpsCardClick = (mode: FPSMode) => {
-    sound.playClick();
-
-    // PRO users activate directly without ads
-    if (state.isPro) {
-      sound.playBoost();
-      const duration = mode === '60' ? 30 : mode === '90' ? 60 : 120;
-      startRewardBoost(duration, mode, `${mode} FPS Optimizer`);
-      setSnackBarMessage(`${mode} FPS Mode Applied`);
-      return;
-    }
-
+    sound.playBoost();
     const durationMinutes = mode === '60' ? 30 : mode === '90' ? 60 : 120;
-    const totalAdsNeeded = mode === '60' ? 1 : mode === '90' ? 2 : 3;
-
-    startDirectAdTask(durationMinutes, totalAdsNeeded, `${mode} FPS Optimizer`);
+    cleanRam();
+    startRewardBoost(durationMinutes, mode, `${mode} FPS Optimizer`);
+    setSnackBarMessage(`${mode} FPS Boost Activated • ${durationMinutes} Min Free`);
   };
 
-  // Direct Ad Earn Trigger from Watch Ad buttons
-  const startDirectAdTask = async (minutes: number, adsNeeded: number, label: string) => {
-    sound.playClick();
-    setNativeAdFailed(false);
-    const type = minutes <= 30 ? '30m' : minutes <= 60 ? '60m' : '120m';
-
-    if (typeof (window as any).showRewardedAd === 'function') {
-      const res = await (window as any).showRewardedAd(type);
-      if (res && res.success) {
-        return;
-      }
-      if (res && res.reason === 'skipped') {
-        setSnackBarMessage('Watch Full Ad To Get Boost');
-        return;
-      }
-      if (res && res.reason === 'failed') {
-        setSnackBarMessage('No Ad Found - Tap To Retry');
-        setNativeAdFailed(true);
-        setActiveAdTask({
-          label,
-          durationMinutes: minutes,
-          totalAdsNeeded: adsNeeded,
-          currentAdIndex: 1,
-        });
-        return;
-      }
-    }
-
-    setActiveAdTask({
-      label,
-      durationMinutes: minutes,
-      totalAdsNeeded: adsNeeded,
-      currentAdIndex: 1,
-    });
-  };
-
-  // Single Ad Finished in the sequence
-  const handleSingleAdSuccess = () => {
-    if (!activeAdTask) return;
-
-    if (activeAdTask.currentAdIndex < activeAdTask.totalAdsNeeded) {
-      const nextIndex = activeAdTask.currentAdIndex + 1;
-      setSnackBarMessage(`Ad ${activeAdTask.currentAdIndex}/${activeAdTask.totalAdsNeeded} Done - Watch 1 More...`);
-      setActiveAdTask({
-        ...activeAdTask,
-        currentAdIndex: nextIndex,
-      });
-    } else {
-      const duration = activeAdTask.durationMinutes;
-      const fps = activeAdTask.targetFps || (duration >= 120 ? '120' : duration >= 60 ? '90' : '60');
-      
-      startRewardBoost(duration, fps, activeAdTask.label);
-      setSnackBarMessage('Reward Earned');
-      setActiveAdTask(null);
-      setNativeAdFailed(false);
-    }
-  };
-
-  // Early close / skip -> DO NOT give reward
-  const handleAdSkippedOrFailed = () => {
-    setActiveAdTask(null);
-    setNativeAdFailed(false);
-    sound.playClick();
-    setSnackBarMessage('Watch Full Ad To Get Boost');
+  // DIRECT FREE BOOST TRIGGER
+  const startFreeBoost = (minutes: number, fps: FPSMode, label: string) => {
+    sound.playBoost();
+    cleanRam();
+    startRewardBoost(minutes, fps, label);
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 pb-24 pt-1 space-y-3.5">
+    <div className="flex-1 overflow-y-auto px-4 pb-6 pt-1 space-y-3.5">
       {/* Toast / SnackBar Notification */}
       {snackBarMessage && (
         <div className="fixed top-12 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-cyan-950 to-blue-950 border border-cyan-400 text-cyan-200 px-4 py-2 rounded-full text-xs font-bold shadow-2xl shadow-cyan-900/60 flex items-center space-x-2 max-w-[90vw] text-center">
-          {snackBarMessage.includes('Activated') || snackBarMessage.includes('Started') || snackBarMessage.includes('Verified') || snackBarMessage.includes('Earned') ? (
+          {snackBarMessage.includes('Activated') || snackBarMessage.includes('Started') || snackBarMessage.includes('Verified') || snackBarMessage.includes('Boosted') ? (
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           ) : (
             <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
@@ -226,6 +135,22 @@ export const HomeScreen: React.FC = () => {
           </div>
           <span className="text-[10px] bg-emerald-400 text-black px-2 py-0.5 rounded font-mono font-bold">
             OPTIMIZED
+          </span>
+        </div>
+      )}
+
+      {/* Remote Important Update Notice (if active in cloudConfig) */}
+      {cloudBackend.remoteConfig.hasImportantUpdate && (
+        <div className="p-2.5 rounded-2xl bg-cyan-950/90 border border-cyan-400/70 text-cyan-200 text-xs flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-2 min-w-0">
+            <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />
+            <div className="min-w-0">
+              <strong className="block truncate">{cloudBackend.remoteConfig.updateTitle || 'Cloud Profile Update'}</strong>
+              <span className="text-[10px] text-cyan-300/80 block truncate">{cloudBackend.remoteConfig.updateMessage}</span>
+            </div>
+          </div>
+          <span className="text-[9px] font-mono bg-cyan-400 text-black font-bold px-2 py-0.5 rounded shrink-0">
+            {cloudBackend.remoteConfig.configVersion}
           </span>
         </div>
       )}
@@ -320,7 +245,7 @@ export const HomeScreen: React.FC = () => {
               {isBoostingAnim ? 'BOOSTING...' : 'Tap to Boost'}
             </span>
             <span className="text-[9px] text-cyan-400 font-mono tracking-widest mt-0.5 uppercase">
-              {state.isBoosting ? `${state.activeFps} FPS ACTIVE` : (state.isPro ? 'PRO VIP READY' : 'INSTANT BOOST')}
+              {state.isBoosting ? `${state.activeFps} FPS ACTIVE` : (state.isPro ? 'PRO VIP READY' : 'FREE INSTANT')}
             </span>
           </button>
         </div>
@@ -360,20 +285,20 @@ export const HomeScreen: React.FC = () => {
         </div>
       </div>
 
-      {/* BIG VISIBLE AD CARD DIRECTLY UNDER TAP TO BOOST */}
-      <div className="p-3.5 rounded-2xl bg-gradient-to-r from-[#1f1604] via-[#241a05] to-[#120e03] border-2 border-amber-400/80 shadow-[0_0_25px_rgba(251,191,36,0.35)] flex items-center justify-between gap-2.5">
+      {/* BIG VISIBLE FREE BOOST CARD DIRECTLY UNDER TAP TO BOOST */}
+      <div className="p-3.5 rounded-2xl bg-gradient-to-r from-[#041f18] via-[#052920] to-[#031410] border-2 border-emerald-400/80 shadow-[0_0_25px_rgba(52,211,153,0.28)] flex items-center justify-between gap-2.5">
         <div className="flex items-center space-x-2.5 min-w-0 flex-1">
-          <div className="w-9 h-9 rounded-xl bg-amber-400/20 border border-amber-400/60 flex items-center justify-center text-amber-400 shrink-0 shadow-md">
-            <Gift className="w-5 h-5 animate-pulse" />
+          <div className="w-9 h-9 rounded-xl bg-emerald-400/20 border border-emerald-400/60 flex items-center justify-center text-emerald-400 shrink-0 shadow-md">
+            <Zap className="w-5 h-5 animate-pulse" />
           </div>
           <div className="min-w-0">
             <h4 className="font-orbitron font-extrabold text-xs text-white uppercase tracking-tight">
-              Watch Ad - Get Free Boost
+              Free Instant Boost
             </h4>
-            <p className="text-[11px] text-amber-300 font-mono font-semibold">
+            <p className="text-[11px] text-emerald-300 font-mono font-semibold">
               {state.isBoosting && state.boostTimeRemainingSec > 0
-                ? 'Boost Activated for 30 Min'
-                : '1 Ad = 30 Min Boost'}
+                ? 'Boost Activated • Running'
+                : '1 Click = 30 Min Boost (Free)'}
             </p>
           </div>
         </div>
@@ -385,13 +310,67 @@ export const HomeScreen: React.FC = () => {
           </div>
         ) : (
           <button
-            onClick={() => startDirectAdTask(30, 1, 'Watch Ad - Get Free Boost')}
-            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-black font-orbitron font-extrabold text-[11px] uppercase tracking-wider shadow-lg shadow-amber-400/40 hover:brightness-110 active:scale-95 transition-all flex items-center space-x-1 cursor-pointer shrink-0"
+            onClick={() => startFreeBoost(30, state.activeFps, 'Free Instant Boost (30 Min)')}
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 text-black font-orbitron font-extrabold text-[11px] uppercase tracking-wider shadow-lg shadow-emerald-400/40 hover:brightness-110 active:scale-95 transition-all flex items-center space-x-1 cursor-pointer shrink-0"
           >
-            <span>Watch Ad Now</span>
+            <span>Start Boost</span>
             <Play className="w-3 h-3 fill-black" />
           </button>
         )}
+      </div>
+
+      {/* 5 OPTIMIZATION PROFILES + SMART GAME LAUNCHER */}
+      <div className="p-3 rounded-2xl bg-[#071129]/90 border border-cyan-900/60 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-orbitron font-bold text-cyan-300 uppercase tracking-wider flex items-center space-x-1">
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Optimization Modes</span>
+          </span>
+          <span className="text-[9px] font-mono text-emerald-300 bg-emerald-950/70 border border-emerald-700/50 px-1.5 py-0.5 rounded">
+            {state.activeProfile.replace('_', ' ')}
+          </span>
+        </div>
+
+        <div className="flex items-center space-x-1.5 overflow-x-auto pb-0.5">
+          {(cloudBackend.remoteProfiles.length > 0 ? cloudBackend.remoteProfiles : OPTIMIZATION_PROFILES).map((prof) => {
+            const active = state.activeProfile === prof.id;
+            return (
+              <button
+                key={prof.id}
+                type="button"
+                onClick={() => applyOptimizationProfile(prof.id as OptimizationProfileMode)}
+                className={`px-2.5 py-1.5 rounded-xl border text-[10px] font-mono font-bold whitespace-nowrap cursor-pointer transition-all shrink-0 ${
+                  active
+                    ? 'bg-cyan-500 text-black border-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.5)]'
+                    : 'bg-[#040c1f] text-slate-300 border-slate-800 hover:border-cyan-700'
+                }`}
+              >
+                {prof.name}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="pt-1 border-t border-cyan-950/80">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[9px] font-mono text-slate-400 uppercase">Smart Game Session Launcher</span>
+            <span className="text-[9px] font-mono text-cyan-400">Auto Firewall + Engine</span>
+          </div>
+          <div className="flex items-center space-x-1.5 overflow-x-auto pb-0.5">
+            {gamesList.map((g) => (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() => launchGameWithAutoBoost(g)}
+                className="px-2.5 py-1.5 rounded-xl bg-[#050f26] border border-cyan-800/60 hover:border-emerald-400 text-[10px] font-orbitron font-bold text-white whitespace-nowrap flex items-center space-x-1.5 cursor-pointer shrink-0 active:scale-95"
+              >
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: g.iconColor }} />
+                <span>{g.name}</span>
+                <Play className="w-2.5 h-2.5 text-emerald-400 fill-emerald-400" />
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* 3 HONEST FPS CARDS */}
@@ -419,7 +398,7 @@ export const HomeScreen: React.FC = () => {
               Best for 4GB RAM
             </span>
             <span className="text-[9px] text-emerald-400/80 font-mono mt-0.5">
-              30 Min • 1 Ad
+              30 Min • Free
             </span>
             {state.activeFps === '60' && state.isBoosting && (
               <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
@@ -448,7 +427,7 @@ export const HomeScreen: React.FC = () => {
               If Supported
             </span>
             <span className="text-[9px] text-cyan-400/80 font-mono mt-0.5">
-              60 Min • 2 Ads
+              60 Min • Free
             </span>
             {state.activeFps === '90' && state.isBoosting && (
               <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
@@ -477,7 +456,7 @@ export const HomeScreen: React.FC = () => {
               If 120Hz Supported
             </span>
             <span className="text-[9px] text-pink-400/90 font-mono mt-0.5">
-              120 Min • 3 Ads
+              120 Min • Free
             </span>
             {state.activeFps === '120' && state.isBoosting && (
               <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-pink-400 animate-ping" />
@@ -489,26 +468,26 @@ export const HomeScreen: React.FC = () => {
         </p>
       </div>
 
-      {/* 4 AD CARDS: DIRECT BOOST TIMER ACTIVATION */}
+      {/* 4 FREE BOOST CARDS: INSTANT TIMER ACTIVATION */}
       <div className="pt-1">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-orbitron font-bold text-amber-300 uppercase tracking-wider flex items-center space-x-1.5">
-            <Gift className="w-4 h-4 text-amber-400" />
-            <span>🎁 FREE BOOST - WATCH AD</span>
+          <span className="text-xs font-orbitron font-bold text-emerald-300 uppercase tracking-wider flex items-center space-x-1.5">
+            <Zap className="w-4 h-4 text-emerald-400" />
+            <span>⚡ FREE BOOST TIMERS</span>
           </span>
           <button 
             onClick={() => { sound.playClick(); setCurrentScreen('reward_ad'); }}
             className="text-[11px] text-cyan-400 hover:text-cyan-300 font-mono font-semibold cursor-pointer"
           >
-            Earn Boost &gt;
+            All Timers &gt;
           </button>
         </div>
 
         {/* 4 Cards in 2x2 Grid */}
         <div className="grid grid-cols-2 gap-2">
-          {/* CARD 1: Yellow - Watch Ad - Get 30 Min Boost (1 Ad) - Button [WATCH] */}
+          {/* CARD 1: Yellow - Quick Boost (+30 Min Free) */}
           <div
-            onClick={() => startDirectAdTask(30, 1, 'Watch Ad (+30 Min Boost)')}
+            onClick={() => startFreeBoost(30, '60', 'Quick Boost (+30 Min Free)')}
             className="p-2.5 rounded-xl bg-[#1c1803]/90 border border-yellow-500/50 hover:border-yellow-400 transition-all cursor-pointer flex items-center justify-between group hover:shadow-lg hover:shadow-yellow-950"
           >
             <div className="flex items-center space-x-2">
@@ -517,40 +496,40 @@ export const HomeScreen: React.FC = () => {
               </div>
               <div>
                 <h4 className="text-xs font-bold text-slate-200 group-hover:text-yellow-300 transition-colors leading-tight">
-                  Watch Ad
+                  Quick Boost
                 </h4>
-                <p className="text-[9px] text-yellow-400 font-mono">+30 Min (1 Ad)</p>
+                <p className="text-[9px] text-yellow-400 font-mono">+30 Min Free</p>
               </div>
             </div>
             <button className="text-[10px] bg-yellow-400 text-black font-bold px-2 py-1 rounded font-mono uppercase shadow-sm cursor-pointer">
-              WATCH
+              START
             </button>
           </div>
 
-          {/* CARD 2: Orange - Rewarded Ad - Get 30 Min Boost (1 Ad) - Button [EARN] */}
+          {/* CARD 2: Orange - Power Boost (+30 Min Free) */}
           <div
-            onClick={() => startDirectAdTask(30, 1, 'Rewarded Ad (+30 Min Boost)')}
+            onClick={() => startFreeBoost(30, '60', 'Power Boost (+30 Min Free)')}
             className="p-2.5 rounded-xl bg-[#1f1103]/90 border border-orange-500/50 hover:border-orange-400 transition-all cursor-pointer flex items-center justify-between group hover:shadow-lg hover:shadow-orange-950"
           >
             <div className="flex items-center space-x-2">
               <div className="w-7 h-7 rounded-lg bg-orange-500/20 border border-orange-400 flex items-center justify-center text-xs font-bold text-orange-400 shadow-md">
-                <Gift className="w-3.5 h-3.5 text-orange-400" />
+                <Flame className="w-3.5 h-3.5 text-orange-400" />
               </div>
               <div>
                 <h4 className="text-xs font-bold text-slate-200 group-hover:text-orange-300 transition-colors leading-tight">
-                  Rewarded Ad
+                  Power Boost
                 </h4>
-                <p className="text-[9px] text-orange-400 font-mono">+30 Min (1 Ad)</p>
+                <p className="text-[9px] text-orange-400 font-mono">+30 Min Free</p>
               </div>
             </div>
             <button className="text-[10px] bg-orange-500 text-black font-bold px-2 py-1 rounded font-mono uppercase shadow-sm cursor-pointer">
-              EARN
+              BOOST
             </button>
           </div>
 
-          {/* CARD 3: Blue - Turbo Ad - Get 60 Min Boost (2 Ads) - Button [BOOST] */}
+          {/* CARD 3: Blue - Turbo Boost (+60 Min Free) */}
           <div
-            onClick={() => startDirectAdTask(60, 2, 'Turbo Ad (+60 Min Boost, 2 Ads)')}
+            onClick={() => startFreeBoost(60, '90', 'Turbo Boost (+60 Min Free)')}
             className="p-2.5 rounded-xl bg-[#031424]/90 border border-cyan-500/50 hover:border-cyan-400 transition-all cursor-pointer flex items-center justify-between group hover:shadow-lg hover:shadow-cyan-950"
           >
             <div className="flex items-center space-x-2">
@@ -559,9 +538,9 @@ export const HomeScreen: React.FC = () => {
               </div>
               <div>
                 <h4 className="text-xs font-bold text-slate-200 group-hover:text-cyan-300 transition-colors leading-tight">
-                  Turbo Ad
+                  Turbo Boost
                 </h4>
-                <p className="text-[9px] text-cyan-400 font-mono">+60 Min (2 Ads)</p>
+                <p className="text-[9px] text-cyan-400 font-mono">+60 Min Free</p>
               </div>
             </div>
             <button className="text-[10px] bg-cyan-400 text-black font-bold px-2 py-1 rounded font-mono uppercase shadow-sm cursor-pointer">
@@ -569,9 +548,9 @@ export const HomeScreen: React.FC = () => {
             </button>
           </div>
 
-          {/* CARD 4: Pink - VIP Ad - Get 120 Min Boost (3 Ads) - Button [UNLOCK] */}
+          {/* CARD 4: Pink - Extreme Boost (+120 Min Free) */}
           <div
-            onClick={() => startDirectAdTask(120, 3, 'VIP Ad (+120 Min Boost, 3 Ads)')}
+            onClick={() => startFreeBoost(120, '120', 'Extreme Boost (+120 Min Free)')}
             className="p-2.5 rounded-xl bg-[#1c031c]/90 border border-pink-500/50 hover:border-pink-400 transition-all cursor-pointer flex items-center justify-between group hover:shadow-lg hover:shadow-pink-950"
           >
             <div className="flex items-center space-x-2">
@@ -580,13 +559,13 @@ export const HomeScreen: React.FC = () => {
               </div>
               <div>
                 <h4 className="text-xs font-bold text-slate-200 group-hover:text-pink-300 transition-colors leading-tight">
-                  VIP Ad
+                  Extreme Boost
                 </h4>
-                <p className="text-[9px] text-pink-400 font-mono">+120 Min (3 Ads)</p>
+                <p className="text-[9px] text-pink-400 font-mono">+120 Min Free</p>
               </div>
             </div>
             <button className="text-[10px] bg-pink-500 text-white font-bold px-2 py-1 rounded font-mono uppercase shadow-sm cursor-pointer">
-              UNLOCK
+              START
             </button>
           </div>
         </div>
@@ -684,7 +663,7 @@ export const HomeScreen: React.FC = () => {
               </span>
             </div>
             <p className="text-[10px] text-amber-200/90 font-medium">
-              Auto Ping + Auto Boost + Ad-Free • Optimize Best FPS
+              Auto Ping + Auto Boost + VIP Mode • Optimize Best FPS
             </p>
           </div>
         </div>
@@ -694,33 +673,6 @@ export const HomeScreen: React.FC = () => {
           <ArrowRight className="w-3.5 h-3.5" />
         </div>
       </div>
-
-      {/* Strict Rewarded Ad Modal */}
-      {activeAdTask && (
-        <AdModal
-          durationMinutes={activeAdTask.durationMinutes}
-          adStep={activeAdTask.currentAdIndex}
-          totalAdSteps={activeAdTask.totalAdsNeeded}
-          targetLabel={activeAdTask.label}
-          initialError={nativeAdFailed}
-          onAdCompleted={handleSingleAdSuccess}
-          onAdSkippedOrFailed={handleAdSkippedOrFailed}
-          onRetryNative={async () => {
-            if (typeof (window as any).showRewardedAd === 'function') {
-              const type = activeAdTask.durationMinutes <= 30 ? '30m' : activeAdTask.durationMinutes <= 60 ? '60m' : '120m';
-              const res = await (window as any).showRewardedAd(type);
-              if (res && res.success) {
-                setActiveAdTask(null);
-                setNativeAdFailed(false);
-                return true;
-              }
-              return false;
-            }
-            setNativeAdFailed(false);
-            return true;
-          }}
-        />
-      )}
 
       {/* Secret Admin PIN Modal (Triggered by 5-Tap on Logo) */}
       {showAdminPinModal && (

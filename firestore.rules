@@ -1,25 +1,278 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Users collection: Allow read and write so gaming client can sync boost stats, ping, and PRO status
-    match /users/{userId} {
-      allow read, write: if true;
-    }
 
-    // Payments collection: Allow create for user payment receipts, and read/update for Admin approval
-    match /payments/{paymentId} {
-      allow read, write: if true;
-    }
-
-    // Admin collection: wallet statistics and platform aggregation
-    match /admin/{document=**} {
-      allow read, write: if true;
-    }
-
-    // Default rule: block all unhandled paths
+    // Global Safety Net (Default Deny)
     match /{document=**} {
       allow read, write: if false;
+    }
+
+    // Core Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (
+          request.auth.token.email == 'araishbutt1122@gmail.com' &&
+          request.auth.token.email_verified == true
+        )
+      );
+    }
+
+    // Validation Blueprints (Anti-Update-Gap)
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'deviceId', 'isPro']) &&
+        data.keys().hasOnly([
+          'name', 'deviceId', 'isPro', 'proExpiry', 'totalBoostTime',
+          'activeFps', 'activeProfile', 'lastBoostTime', 'boost', 'time',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 64 &&
+        data.deviceId is string && data.deviceId.size() >= 1 && data.deviceId.size() <= 128 &&
+        data.isPro is bool &&
+        (!('proExpiry' in data) || data.proExpiry == null || data.proExpiry is number) &&
+        (!('totalBoostTime' in data) || data.totalBoostTime is number) &&
+        (!('activeFps' in data) || (data.activeFps is string && data.activeFps in ['60', '90', '120'])) &&
+        (!('activeProfile' in data) || (data.activeProfile is string && data.activeProfile in ['SMART_BOOST', 'PERFORMANCE_MODE', 'EXTREME_MODE', 'BALANCED_MODE', 'BATTERY_SAVER'])) &&
+        (!('lastBoostTime' in data) || (data.lastBoostTime is string && data.lastBoostTime.size() <= 64)) &&
+        (!('boost' in data) || (data.boost is string && data.boost.size() <= 32)) &&
+        (!('time' in data) || (data.time is string && data.time.size() <= 64)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+        (!('updatedAt' in data) || data.updatedAt is number);
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['id', 'userId', 'packageName', 'amount', 'method', 'tid', 'status']) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'name', 'packageName', 'amount', 'method', 'tid',
+          'screenshotUrl', 'screenshotName', 'ocrTid', 'matchStatus', 'note',
+          'status', 'rejectReason', 'createdAt', 'reviewedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 64 &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.packageName is string && data.packageName.size() >= 1 && data.packageName.size() <= 64 &&
+        data.amount is number && data.amount > 0 && data.amount <= 500000 &&
+        data.method is string && data.method in ['jazzcash', 'easypaisa', 'binance'] &&
+        data.tid is string && data.tid.size() >= 4 && data.tid.size() <= 64 &&
+        data.status is string && data.status in ['pending', 'approved', 'rejected'] &&
+        (!('name' in data) || (data.name is string && data.name.size() <= 64)) &&
+        (!('screenshotUrl' in data) || (data.screenshotUrl is string && data.screenshotUrl.size() <= 1048576)) &&
+        (!('screenshotName' in data) || (data.screenshotName is string && data.screenshotName.size() <= 128)) &&
+        (!('ocrTid' in data) || (data.ocrTid is string && data.ocrTid.size() <= 64)) &&
+        (!('matchStatus' in data) || (data.matchStatus is string && data.matchStatus in ['matched', 'mismatch', 'manual_needed'])) &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 128)) &&
+        (!('rejectReason' in data) || (data.rejectReason is string && data.rejectReason.size() <= 200)) &&
+        (!('createdAt' in data) || data.createdAt is number) &&
+        (!('reviewedAt' in data) || data.reviewedAt is number);
+    }
+
+    function isValidRemoteConfig(data) {
+      return data.keys().hasAll(['configVersion', 'serviceStatus', 'hasImportantUpdate']) &&
+        data.keys().hasOnly([
+          'configVersion', 'minAppVersion', 'serviceStatus', 'updateTitle',
+          'updateMessage', 'hasImportantUpdate', 'telemetryEnabled', 'updatedAt'
+        ]) &&
+        data.configVersion is string && data.configVersion.size() >= 1 && data.configVersion.size() <= 32 &&
+        data.serviceStatus is string && data.serviceStatus in ['operational', 'degraded', 'maintenance'] &&
+        data.hasImportantUpdate is bool &&
+        (!('minAppVersion' in data) || (data.minAppVersion is string && data.minAppVersion.size() <= 32)) &&
+        (!('updateTitle' in data) || (data.updateTitle is string && data.updateTitle.size() <= 120)) &&
+        (!('updateMessage' in data) || (data.updateMessage is string && data.updateMessage.size() <= 300)) &&
+        (!('telemetryEnabled' in data) || data.telemetryEnabled is bool) &&
+        (!('updatedAt' in data) || data.updatedAt is number);
+    }
+
+    function isValidOptimizationProfile(data) {
+      return data.keys().hasAll(['id', 'name', 'targetFps']) &&
+        data.keys().hasOnly([
+          'id', 'name', 'description', 'targetFps', 'performanceMode',
+          'reduceLag', 'improveRendering', 'graphicsOptimized', 'thermalCapC', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 48 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 64 &&
+        data.targetFps is string && data.targetFps in ['60', '90', '120'] &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 200)) &&
+        (!('performanceMode' in data) || data.performanceMode is bool) &&
+        (!('reduceLag' in data) || data.reduceLag is bool) &&
+        (!('improveRendering' in data) || data.improveRendering is bool) &&
+        (!('graphicsOptimized' in data) || data.graphicsOptimized is bool) &&
+        (!('thermalCapC' in data) || (data.thermalCapC is number && data.thermalCapC >= 30 && data.thermalCapC <= 75)) &&
+        (!('updatedAt' in data) || data.updatedAt is number);
+    }
+
+    function isValidDeviceCompatibility(data) {
+      return data.keys().hasAll(['deviceId', 'deviceName', 'maxSupportedHz', 'compatibilityTier']) &&
+        data.keys().hasOnly([
+          'deviceId', 'deviceName', 'maxSupportedHz', 'totalRamGb',
+          'adpfSupported', 'gameModeApiSupported', 'vpnFirewallSupported',
+          'recommendedProfile', 'compatibilityTier', 'updatedAt'
+        ]) &&
+        data.deviceId is string && data.deviceId.size() >= 1 && data.deviceId.size() <= 128 &&
+        data.deviceName is string && data.deviceName.size() >= 1 && data.deviceName.size() <= 128 &&
+        data.maxSupportedHz is number && data.maxSupportedHz >= 30 && data.maxSupportedHz <= 240 &&
+        data.compatibilityTier is string && data.compatibilityTier in ['FLAGSHIP', 'COMPETITIVE', 'STANDARD', 'WEB_PREVIEW'] &&
+        (!('totalRamGb' in data) || (data.totalRamGb is number && data.totalRamGb > 0 && data.totalRamGb <= 128)) &&
+        (!('adpfSupported' in data) || data.adpfSupported is bool) &&
+        (!('gameModeApiSupported' in data) || data.gameModeApiSupported is bool) &&
+        (!('vpnFirewallSupported' in data) || data.vpnFirewallSupported is bool) &&
+        (!('recommendedProfile' in data) || (data.recommendedProfile is string && data.recommendedProfile.size() <= 48)) &&
+        (!('updatedAt' in data) || data.updatedAt is number);
+    }
+
+    function isValidCrashDiagnostic(data) {
+      return data.keys().hasAll(['id', 'userId', 'message', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'message', 'stack', 'screen', 'platform', 'appVersion', 'createdAt']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 64 &&
+        data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+        data.message is string && data.message.size() >= 1 && data.message.size() <= 500 &&
+        data.createdAt is number &&
+        (!('stack' in data) || (data.stack is string && data.stack.size() <= 2000)) &&
+        (!('screen' in data) || (data.screen is string && data.screen.size() <= 48)) &&
+        (!('platform' in data) || (data.platform is string && data.platform.size() <= 32)) &&
+        (!('appVersion' in data) || (data.appVersion is string && data.appVersion.size() <= 32));
+    }
+
+    function isValidPerformanceReport(data) {
+      return data.keys().hasAll(['id', 'userId', 'gameName', 'profileMode', 'avgFps', 'createdAt']) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'gameName', 'profileMode', 'avgFps', 'minFps', 'maxFps',
+          'avgPingMs', 'packetLossPercent', 'peakTempC', 'blockedAppsCount', 'durationSec', 'createdAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 64 &&
+        data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+        data.gameName is string && data.gameName.size() >= 1 && data.gameName.size() <= 80 &&
+        data.profileMode is string && data.profileMode.size() >= 1 && data.profileMode.size() <= 48 &&
+        data.avgFps is number && data.avgFps >= 0 && data.avgFps <= 240 &&
+        data.createdAt is number &&
+        (!('minFps' in data) || (data.minFps is number && data.minFps >= 0 && data.minFps <= 240)) &&
+        (!('maxFps' in data) || (data.maxFps is number && data.maxFps >= 0 && data.maxFps <= 240)) &&
+        (!('avgPingMs' in data) || (data.avgPingMs is number && data.avgPingMs >= 0 && data.avgPingMs <= 5000)) &&
+        (!('packetLossPercent' in data) || (data.packetLossPercent is number && data.packetLossPercent >= 0 && data.packetLossPercent <= 100)) &&
+        (!('peakTempC' in data) || (data.peakTempC is number && data.peakTempC >= 0 && data.peakTempC <= 120)) &&
+        (!('blockedAppsCount' in data) || (data.blockedAppsCount is number && data.blockedAppsCount >= 0 && data.blockedAppsCount <= 500)) &&
+        (!('durationSec' in data) || (data.durationSec is number && data.durationSec >= 0 && data.durationSec <= 86400));
+    }
+
+    // 1. Users collection (PII / Pro status isolated to Owner or Admin)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow create: if isValidId(userId) && isOwner(userId) &&
+        isValidUser(incoming()) &&
+        incoming().deviceId == request.auth.uid;
+      allow update: if isValidId(userId) && isValidUser(incoming()) && (
+        isAdmin() ||
+        (
+          isOwner(userId) &&
+          incoming().deviceId == existing().deviceId &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'isPro', 'proExpiry', 'totalBoostTime', 'activeFps',
+            'activeProfile', 'lastBoostTime', 'boost', 'time', 'updatedAt'
+          ])
+        )
+      );
+    }
+
+    // 2. Payments collection (Owner creates pending/auto-matched receipt; Admin approves/rejects)
+    match /payments/{paymentId} {
+      allow get: if isValidId(paymentId) && isSignedIn() && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isValidId(paymentId) && isSignedIn() &&
+        isValidPayment(incoming()) &&
+        incoming().userId == request.auth.uid;
+      allow update: if isValidId(paymentId) && isValidPayment(incoming()) && (
+        isAdmin() ||
+        (
+          isOwner(existing().userId) &&
+          existing().status == 'pending' &&
+          incoming().userId == existing().userId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['tid', 'screenshotUrl', 'screenshotName', 'note'])
+        )
+      );
+    }
+
+    // 3. Admin collection (Restricted to Admin only)
+    match /admin/{docId} {
+      allow get: if isValidId(docId) && isAdmin();
+      allow write: if false;
+    }
+
+    // 4. Admins role lookup collection
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && (isOwner(adminUid) || isAdmin());
+      allow write: if false;
+    }
+
+    // 5. Cloud Remote Config (Read for signed-in app health/update checks; Admin writes)
+    match /cloudConfig/{configId} {
+      allow get: if isValidId(configId) && isSignedIn();
+      allow create, update: if isValidId(configId) && isAdmin() && isValidRemoteConfig(incoming());
+    }
+
+    // 6. Remote Optimization Profiles (Signed-in read/list; Admin writes)
+    match /optimizationProfiles/{profileId} {
+      allow get: if isValidId(profileId) && isSignedIn();
+      allow list: if isSignedIn() && resource.data.id is string;
+      allow create, update: if isValidId(profileId) && isAdmin() && isValidOptimizationProfile(incoming());
+    }
+
+    // 7. Device Compatibility Database (Owner device sync + read for compatibility lookups)
+    match /deviceProfiles/{deviceId} {
+      allow get: if isValidId(deviceId) && isSignedIn();
+      allow list: if isSignedIn() && (isAdmin() || resource.data.deviceId == request.auth.uid);
+      allow create: if isValidId(deviceId) && isSignedIn() &&
+        isValidDeviceCompatibility(incoming()) &&
+        incoming().deviceId == request.auth.uid;
+      allow update: if isValidId(deviceId) && isValidDeviceCompatibility(incoming()) && (
+        isAdmin() ||
+        (
+          isOwner(existing().deviceId) &&
+          incoming().deviceId == existing().deviceId &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'deviceName', 'maxSupportedHz', 'totalRamGb', 'adpfSupported',
+            'gameModeApiSupported', 'vpnFirewallSupported', 'recommendedProfile',
+            'compatibilityTier', 'updatedAt'
+          ])
+        )
+      );
+    }
+
+    // 8. Crash Diagnostics (Authenticated owner creates/reads own reports)
+    match /crashReports/{reportId} {
+      allow get: if isValidId(reportId) && isSignedIn() && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isValidId(reportId) && isSignedIn() && isValidCrashDiagnostic(incoming());
+    }
+
+    // 9. Gaming Performance Reports (Authenticated owner creates/reads own telemetry reports)
+    match /performanceReports/{reportId} {
+      allow get: if isValidId(reportId) && isSignedIn() && (isOwner(existing().userId) || isAdmin());
+      allow list: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isValidId(reportId) && isSignedIn() && isValidPerformanceReport(incoming());
+    }
+
+    // 10. Health Connection Check doc (Signed-in server RTT probe)
+    match /test/{docId} {
+      allow get: if isValidId(docId) && isSignedIn();
+      allow write: if false;
     }
   }
 }

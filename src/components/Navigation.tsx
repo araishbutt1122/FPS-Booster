@@ -71,7 +71,7 @@ export const TopAppBar: React.FC = () => {
       case 'premium':
         return state.language === 'ur' ? 'Upgrade To PRO' : 'Premium Package';
       case 'reward_ad':
-        return state.language === 'ur' ? 'Ad Rewards' : 'Watch Ad & Get Rewards';
+        return state.language === 'ur' ? 'Free Boost Timers' : 'Free Boost Timers';
       default:
         return '';
     }
@@ -197,7 +197,7 @@ export const TopAppBar: React.FC = () => {
                   </span>
                 </div>
                 <p className="text-[11px] text-cyan-300">
-                  {state.isPro ? 'All PRO profiles & VPN active' : 'Optimize best FPS • Ad rewards available'}
+                  {state.isPro ? 'All PRO profiles & VPN active' : 'Optimize best FPS • Free instant boost'}
                 </p>
               </div>
 
@@ -225,10 +225,10 @@ export const TopAppBar: React.FC = () => {
                   className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-slate-200 hover:bg-cyan-950/40 transition-all font-medium text-xs"
                 >
                   <div className="flex items-center space-x-2.5">
-                    <Gift className="w-4 h-4 text-pink-400" />
-                    <span>Watch Ads &amp; Free Boost</span>
+                    <Zap className="w-4 h-4 text-emerald-400" />
+                    <span>Instant Boost Timers</span>
                   </div>
-                  <span className="text-[10px] bg-pink-500/20 text-pink-300 px-1.5 py-0.5 rounded">Free</span>
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">Free</span>
                 </button>
 
                 <button

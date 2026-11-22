@@ -99,10 +99,140 @@ export interface AdminWalletTransfer {
   date: string;
 }
 
+export type OptimizationProfileMode =
+  | 'SMART_BOOST'
+  | 'PERFORMANCE_MODE'
+  | 'EXTREME_MODE'
+  | 'BALANCED_MODE'
+  | 'BATTERY_SAVER';
+
+export type FirewallPresetMode = 'esports_strict' | 'social_keep' | 'custom';
+
+export interface FpsHistoryPoint {
+  timestamp: number;
+  fps: number;
+  targetFps: number;
+  profile: OptimizationProfileMode;
+}
+
+export interface CloudRemoteConfig {
+  configVersion: string;
+  minAppVersion: string;
+  serviceStatus: 'operational' | 'degraded' | 'maintenance';
+  updateTitle: string;
+  updateMessage: string;
+  hasImportantUpdate: boolean;
+  telemetryEnabled: boolean;
+  updatedAt: number;
+}
+
+export interface RemoteOptimizationProfileSpec {
+  id: OptimizationProfileMode;
+  name: string;
+  description: string;
+  targetFps: FPSMode;
+  performanceMode: boolean;
+  reduceLag: boolean;
+  improveRendering: boolean;
+  graphicsOptimized: boolean;
+  thermalCapC: number;
+}
+
+export interface CloudBackendState {
+  status: 'connected' | 'offline_cache' | 'checking' | 'error';
+  rttMs: number | null;
+  lastSyncedAt: number | null;
+  errorMessage?: string;
+  remoteConfig: CloudRemoteConfig;
+  remoteProfiles: RemoteOptimizationProfileSpec[];
+  deviceTier: 'FLAGSHIP' | 'COMPETITIVE' | 'STANDARD' | 'WEB_PREVIEW';
+}
+
+export interface FirewallState {
+  enabled: boolean;
+  hasVpnPermission: boolean;
+  isNativeAndroid: boolean;
+  preset: FirewallPresetMode;
+  protectedGamePkg: string;
+  protectedGameName: string;
+  blockedBytesTotal: number;
+  blockedPacketsCount: number;
+  hasPreviousSnapshot: boolean;
+  previousSnapshotBlockedIds: string[] | null;
+  previousSnapshotEnabled: boolean | null;
+}
+
+export interface DeviceCapabilitiesState {
+  isNativeAndroid: boolean;
+  deviceModel: string;
+  androidSdk: number;
+  maxRefreshHz: number;
+  supportedRefreshRates: number[];
+  cpuCores: number;
+  cpuMaxClockMhz: number;
+  thermalStatus: 'NONE' | 'LIGHT' | 'MODERATE' | 'SEVERE' | 'CRITICAL' | 'UNAVAILABLE';
+  thermalHeadroom: number | null;
+  adpfSupported: boolean;
+  gameModeApiSupported: boolean;
+  gameModeState: 'UNSUPPORTED' | 'STANDARD' | 'PERFORMANCE' | 'BATTERY';
+  vpnFirewallSupported: boolean;
+}
+
+export interface NetworkDiagnosticsState {
+  pingMs: number;
+  jitterMs: number;
+  packetLossPercent: number;
+  downloadMbps: number;
+  uploadMbps: number;
+  stabilityPercent: number;
+  connectionType: string;
+  isMeasuringSpeed: boolean;
+  lastDiagnosticsAt: number | null;
+}
+
+export interface SmartSessionState {
+  isActive: boolean;
+  startedAt: number | null;
+  gameName: string;
+  gamePackage: string;
+  profileUsed: OptimizationProfileMode;
+  completedSteps: number[];
+  peakTempC: number;
+  fpsSamples: number[];
+}
+
+export interface CrashDiagnosticItem {
+  id: string;
+  userId: string;
+  message: string;
+  stack?: string;
+  screen: string;
+  platform: string;
+  appVersion: string;
+  createdAt: number;
+}
+
+export interface PerformanceReportItem {
+  id: string;
+  userId: string;
+  gameName: string;
+  profileMode: OptimizationProfileMode;
+  avgFps: number;
+  minFps: number;
+  maxFps: number;
+  avgPingMs: number;
+  packetLossPercent: number;
+  peakTempC: number;
+  blockedAppsCount: number;
+  durationSec: number;
+  createdAt: number;
+}
+
 export interface BoosterState {
   isGamingModeOn: boolean;
   isVpnActive: boolean;
   activeFps: FPSMode;
+  activeProfile: OptimizationProfileMode;
   currentFps: number;
   maxHardwareHz: number;
   ramUsagePercent: number;

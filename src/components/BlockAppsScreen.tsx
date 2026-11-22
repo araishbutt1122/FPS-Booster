@@ -4,20 +4,32 @@ import {
   Search,
   CheckCircle2,
   X,
+  Gamepad2,
+  RotateCcw,
+  KeyRound,
 } from 'lucide-react';
 import { useBooster } from '../context/BoosterContext.tsx';
 import { RealAppIcon } from './AppIcons.tsx';
+import { formatBytesCompact } from '../utils/gamingEngine.ts';
 
 export const BlockAppsScreen: React.FC = () => {
   const {
     appsList,
+    gamesList,
     toggleAppBlock,
     toggleAllAppsBlock,
     applyVpnFirewall,
+    firewallState,
+    toggleFirewallMaster,
+    requestFirewallVpnPermission,
+    setProtectedGame,
+    applyFirewallPreset,
+    restorePreviousFirewallRules,
   } = useBooster();
 
   const [showToast, setShowToast] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterTab, setFilterTab] = useState<'all' | 'blocked' | 'allowed'>('all');
 
   // Keep Blocked apps grouped cleanly at top, then Allowed apps
   const sortedApps = [...appsList].sort((a, b) => {
@@ -25,15 +37,20 @@ export const BlockAppsScreen: React.FC = () => {
     return b.blockedDataMb - a.blockedDataMb;
   });
 
-  // Filter by search query
-  const filteredApps = sortedApps.filter(
-    (app) =>
-      app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      app.packageName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      app.category.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Filter by tab + search query
+  const filteredApps = sortedApps.filter((app) => {
+    if (filterTab === 'blocked' && !app.isBlocked) return false;
+    if (filterTab === 'allowed' && app.isBlocked) return false;
+    const q = searchQuery.toLowerCase();
+    return (
+      app.name.toLowerCase().includes(q) ||
+      app.packageName.toLowerCase().includes(q) ||
+      app.category.toLowerCase().includes(q)
+    );
+  });
 
   const blockedCount = appsList.filter((a) => a.isBlocked).length;
+  const allowedCount = appsList.length - blockedCount;
 
   const handleImmediateToggle = (appId: string) => {
     toggleAppBlock(appId);
@@ -43,7 +60,7 @@ export const BlockAppsScreen: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 pb-24 pt-1 space-y-3.5">
+    <div className="flex-1 overflow-y-auto px-4 pb-6 pt-1 space-y-3.5">
       {/* Toast */}
       {showToast && (
         <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-cyan-900 border border-cyan-400 text-white px-5 py-2 rounded-full text-xs font-bold shadow-2xl shadow-cyan-950 flex items-center space-x-2">
@@ -75,20 +92,106 @@ export const BlockAppsScreen: React.FC = () => {
             Background Data Blocker
           </h2>
           <p className="text-[11px] text-cyan-300/80 max-w-xs mt-0.5">
-            Block Background Internet for Selected Apps During Gaming
+            Local Android VPN Firewall • Zero Remote Proxy / Zero Payload Inspection
           </p>
         </div>
 
-        {/* Local VPN Firewall Status Badge */}
-        <div className="mt-2 flex items-center flex-wrap justify-center gap-2 text-xs bg-[#071333] border border-cyan-900/60 px-3.5 py-1.5 rounded-full">
-          <div className="flex items-center space-x-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span className="text-slate-300 font-mono text-[11px]">VPN Firewall:</span>
-            <span className="text-emerald-400 font-bold font-mono text-[11px]">ACTIVE</span>
+        {/* Local VPN Firewall Master Switch & Blocked Data Badge */}
+        <div className="mt-2 w-full bg-[#071333] border border-cyan-800/70 rounded-2xl p-2.5 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center space-x-2">
+              <span className={`w-2.5 h-2.5 rounded-full ${firewallState.enabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+              <div>
+                <span className="text-xs font-orbitron font-bold text-white block leading-tight">
+                  Local VPN Firewall {firewallState.enabled ? 'ON' : 'OFF'}
+                </span>
+                <span className="text-[10px] text-cyan-300/80 font-mono block">
+                  Blocked Data: {firewallState.isNativeAndroid ? formatBytesCompact(firewallState.blockedBytesTotal) : 'Android APK Required for Packet Drop'}
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={toggleFirewallMaster}
+              aria-label="Master Firewall Toggle"
+              className={`w-11 h-6 rounded-full transition-colors relative p-0.5 shrink-0 cursor-pointer ${
+                firewallState.enabled ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-slate-600'
+              }`}
+            >
+              <div className={`w-5 h-5 rounded-full bg-white transition-transform shadow-sm ${firewallState.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+            </button>
           </div>
-          <span className="text-slate-600">|</span>
-          <div className="text-cyan-400 font-mono text-[11px]">
-            Data Saved: Estimated
+
+          {/* Selected Game Protection + VPN Permission + Restore */}
+          <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-cyan-950/80 flex-wrap">
+            <div className="flex items-center space-x-1.5 min-w-0 flex-1">
+              <Gamepad2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <select
+                value={firewallState.protectedGamePkg}
+                onChange={(e) => {
+                  const found = gamesList.find(g => g.packageName === e.target.value);
+                  if (found) setProtectedGame(found);
+                }}
+                aria-label="Protected Game Package"
+                className="bg-[#030b1d] border border-emerald-700/60 text-emerald-300 text-[10px] font-mono rounded-lg px-2 py-1 focus:outline-none truncate max-w-[170px]"
+              >
+                {gamesList.map((g) => (
+                  <option key={g.id} value={g.packageName}>
+                    Protect: {g.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center space-x-1.5 shrink-0">
+              {firewallState.isNativeAndroid && !firewallState.hasVpnPermission && (
+                <button
+                  type="button"
+                  onClick={requestFirewallVpnPermission}
+                  className="px-2 py-1 rounded-lg bg-amber-500/20 border border-amber-400 text-amber-300 font-mono text-[10px] font-bold flex items-center space-x-1 cursor-pointer"
+                >
+                  <KeyRound className="w-3 h-3" />
+                  <span>VPN Permit</span>
+                </button>
+              )}
+              {firewallState.hasPreviousSnapshot && (
+                <button
+                  type="button"
+                  onClick={restorePreviousFirewallRules}
+                  className="px-2 py-1 rounded-lg bg-slate-800 border border-cyan-800/60 text-cyan-300 font-mono text-[10px] font-bold flex items-center space-x-1 cursor-pointer hover:bg-slate-700"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Restore</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Auto Gaming Firewall Presets */}
+          <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+            <button
+              type="button"
+              onClick={() => applyFirewallPreset('esports_strict')}
+              className={`py-1.5 px-2 rounded-xl border text-[10px] font-mono font-bold cursor-pointer transition-all ${
+                firewallState.preset === 'esports_strict'
+                  ? 'bg-red-950/80 border-red-400 text-red-200'
+                  : 'bg-[#040d21] border-slate-800 text-slate-300 hover:border-cyan-700'
+              }`}
+            >
+              Esports Strict (Block All BG)
+            </button>
+            <button
+              type="button"
+              onClick={() => applyFirewallPreset('social_keep')}
+              className={`py-1.5 px-2 rounded-xl border text-[10px] font-mono font-bold cursor-pointer transition-all ${
+                firewallState.preset === 'social_keep'
+                  ? 'bg-emerald-950/80 border-emerald-400 text-emerald-200'
+                  : 'bg-[#040d21] border-slate-800 text-slate-300 hover:border-cyan-700'
+              }`}
+            >
+              Keep Chat • Block Media
+            </button>
           </div>
         </div>
       </div>
@@ -113,6 +216,31 @@ export const BlockAppsScreen: React.FC = () => {
             <X className="w-3.5 h-3.5" />
           </button>
         )}
+      </div>
+
+      {/* Allowed / Blocked Filter Tabs */}
+      <div className="grid grid-cols-3 gap-1.5 bg-[#040b1d] p-1 rounded-xl border border-cyan-950 text-[10px] font-mono font-bold">
+        <button
+          type="button"
+          onClick={() => setFilterTab('all')}
+          className={`py-1 rounded-lg cursor-pointer ${filterTab === 'all' ? 'bg-cyan-500 text-black' : 'text-slate-400 hover:text-white'}`}
+        >
+          All ({appsList.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setFilterTab('blocked')}
+          className={`py-1 rounded-lg cursor-pointer ${filterTab === 'blocked' ? 'bg-red-500 text-white' : 'text-red-300 hover:text-white'}`}
+        >
+          Blocked ({blockedCount})
+        </button>
+        <button
+          type="button"
+          onClick={() => setFilterTab('allowed')}
+          className={`py-1 rounded-lg cursor-pointer ${filterTab === 'allowed' ? 'bg-emerald-500 text-black' : 'text-emerald-300 hover:text-white'}`}
+        >
+          Allowed ({allowedCount})
+        </button>
       </div>
 
       {/* Select All Controls & Dynamic Counts */}

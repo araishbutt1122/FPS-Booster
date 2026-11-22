@@ -13,7 +13,8 @@ import {
   Clock,
   CheckCircle2,
   ExternalLink,
-  Smartphone
+  Smartphone,
+  Cloud
 } from 'lucide-react';
 import { useBooster, JAZZCASH_NUMBER, EASYPAISA_NUMBER, BINANCE_PAY_ID } from '../context/BoosterContext.tsx';
 import { ProPackage, PaymentMethodType } from '../types.ts';
@@ -21,7 +22,7 @@ import { sound } from '../utils/audio.ts';
 import { JazzCashLogo, EasypaisaLogo, BinanceLogo } from './PaymentLogos.tsx';
 
 export const PremiumPackageScreen: React.FC = () => {
-  const { packages, state, submitTransaction } = useBooster();
+  const { packages, state, submitTransaction, cloudBackend } = useBooster();
   
   // Selected package ID derived live from BoosterContext packages
   const defaultPkg = packages.find(p => p.isPopular) || packages[0];
@@ -132,7 +133,7 @@ export const PremiumPackageScreen: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 pb-24 pt-1 space-y-4">
+    <div className="flex-1 overflow-y-auto px-4 pb-6 pt-1 space-y-4">
       {/* Top Golden Crown Hero */}
       <div className="flex flex-col items-center justify-center pt-2 pb-1 relative">
         <div className="relative">
@@ -153,6 +154,14 @@ export const PremiumPackageScreen: React.FC = () => {
         <p className="text-[11px] text-slate-300 font-semibold tracking-wide mt-1 text-center">
           Optimize for best FPS your device supports
         </p>
+        <div className="mt-1 inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-cyan-950/70 border border-cyan-800/60 text-[10px] font-mono text-cyan-300">
+          <Cloud className="w-3 h-3 text-cyan-400" />
+          <span>
+            {cloudBackend.status === 'connected'
+              ? `Cloud Synced (${cloudBackend.rttMs ?? '--'}ms) • ${cloudBackend.remoteConfig.configVersion}`
+              : 'Offline Cache Sync Mode'}
+          </span>
+        </div>
       </div>
 
       {/* PACKAGES LIST (6 PACKAGES, SINGLE BEST VALUE BADGE ON PKG 7 DAYS) */}
