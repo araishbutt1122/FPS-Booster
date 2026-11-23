@@ -21,7 +21,8 @@ import {
   Gift,
   Lock,
   KeyRound,
-  Zap
+  Zap,
+  AlertTriangle
 } from 'lucide-react';
 import { useBooster } from '../context/BoosterContext.tsx';
 import { sound } from '../utils/audio.ts';
@@ -33,7 +34,11 @@ export const StatusBar: React.FC = () => {
 };
 
 export const TopAppBar: React.FC = () => {
-  const { currentScreen, setCurrentScreen, state, setLanguage } = useBooster();
+  const { currentScreen, setCurrentScreen, state, setLanguage, thermalMonitor, smartSession } = useBooster();
+  const isGamingHighTemp =
+    thermalMonitor.isHighTempWarning ||
+    ((state.isGamingModeOn || state.isBoosting || smartSession.isActive) &&
+      (thermalMonitor.severity === 'high' || thermalMonitor.severity === 'critical'));
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [showAdminPinModal, setShowAdminPinModal] = useState(false);
   const [adminPin, setAdminPin] = useState('');
@@ -128,6 +133,24 @@ export const TopAppBar: React.FC = () => {
         {/* Top Header Timer Chip: [⏰ 30:00 Boost Left] / [⚡ Ready to Boost] */}
         {/* NO TOP PRO BUTTON - PRO IS ONLY IN BOTTOM NAV */}
         <div className="flex items-center space-x-2">
+          {isGamingHighTemp && (
+            <button
+              type="button"
+              onClick={() => {
+                sound.playClick();
+                setCurrentScreen('dashboard');
+              }}
+              className={`flex items-center space-x-1 px-2 py-1 rounded-full border text-[10px] font-mono font-bold cursor-pointer whitespace-nowrap tabular-nums ${
+                thermalMonitor.severity === 'critical'
+                  ? 'bg-red-950/95 border-red-500 text-red-200'
+                  : 'bg-orange-950/95 border-orange-500 text-orange-200'
+              }`}
+              title="High device temperature detected during gaming — tap to inspect Dashboard"
+            >
+              <AlertTriangle className="w-3 h-3 shrink-0" />
+              <span>{thermalMonitor.currentTempC.toFixed(0)}°C HOT</span>
+            </button>
+          )}
           {state.isBoosting && state.boostTimeRemainingSec > 0 ? (
             <div 
               onClick={() => {
@@ -376,7 +399,11 @@ export const TopAppBar: React.FC = () => {
 };
 
 export const BottomNavBar: React.FC = () => {
-  const { currentScreen, setCurrentScreen } = useBooster();
+  const { currentScreen, setCurrentScreen, thermalMonitor, state, smartSession } = useBooster();
+  const hasHighTempAlert =
+    thermalMonitor.isHighTempWarning ||
+    ((state.isGamingModeOn || state.isBoosting || smartSession.isActive) &&
+      (thermalMonitor.severity === 'high' || thermalMonitor.severity === 'critical'));
   const [showAdminPinModal, setShowAdminPinModal] = useState(false);
   const [adminPin, setAdminPin] = useState('');
   const [pinError, setPinError] = useState(false);
@@ -423,12 +450,24 @@ export const BottomNavBar: React.FC = () => {
               sound.playClick();
               setCurrentScreen('dashboard');
             }}
-            className={`flex-1 min-h-[44px] flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition-all cursor-pointer ${
+            className={`relative flex-1 min-h-[44px] flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition-all cursor-pointer ${
               currentScreen === 'dashboard' 
-                ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 drop-shadow-[0_0_8px_rgba(0,191,255,0.7)]' 
+                ? hasHighTempAlert
+                  ? 'bg-orange-500/20 text-orange-300 border border-orange-500/60'
+                  : 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 drop-shadow-[0_0_8px_rgba(0,191,255,0.7)]' 
+                : hasHighTempAlert
+                ? 'text-orange-300 hover:text-orange-200'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
+            {hasHighTempAlert && (
+              <AlertTriangle
+                aria-label="High temperature warning"
+                className={`w-3 h-3 absolute top-1 right-1.5 ${
+                  thermalMonitor.severity === 'critical' ? 'text-red-400' : 'text-orange-400'
+                }`}
+              />
+            )}
             <Activity className="w-5 h-5 mb-0.5 shrink-0" />
             <span className="text-[10px] font-medium tracking-tight whitespace-nowrap">Monitor</span>
           </button>

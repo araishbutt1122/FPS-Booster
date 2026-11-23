@@ -26,6 +26,7 @@ import {
   BottleneckReport,
   BottleneckItem,
   ThermalMonitorState,
+  DisplayHardwareInfo,
 } from '../types.ts';
 import { sound } from '../utils/audio.ts';
 import { RefreshRateDetector } from '../utils/fpsDetector.ts';
@@ -189,6 +190,8 @@ interface BoosterContextType {
   cloudBackend: CloudBackendState;
   syncCloudBackend: () => Promise<void>;
   deviceCapabilities: DeviceCapabilitiesState;
+  displayInfo: DisplayHardwareInfo;
+  redetectRefreshRate: () => Promise<DisplayHardwareInfo>;
   performanceReports: PerformanceReportItem[];
   crashDiagnostics: CrashDiagnosticItem[];
   logCrashDiagnostic: (message: string, stack?: string, screen?: string) => Promise<void>;
@@ -456,6 +459,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (!parsed.activeProfile) {
           parsed.activeProfile = 'SMART_BOOST';
         }
+        parsed.maxHardwareHz = RefreshRateDetector.getDetectedMaxHz();
         return parsed;
       } catch {}
     }
@@ -464,8 +468,8 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       isVpnActive: false,
       activeFps: '60',
       activeProfile: 'SMART_BOOST',
-      currentFps: 60,
-      maxHardwareHz: 120,
+      currentFps: RefreshRateDetector.getDisplayInfo().activeHz || 60,
+      maxHardwareHz: RefreshRateDetector.getDetectedMaxHz(),
       ramUsagePercent: 35,
       ramUsedGb: 1.4,
       totalRamGb: 4.0,
@@ -575,21 +579,33 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     deviceTier: isNativeAndroidRuntime() ? 'COMPETITIVE' : 'WEB_PREVIEW',
   });
 
+  // Real Display Hardware Info (WindowManager / DisplayMetrics / VSync)
+  const [displayInfo, setDisplayInfo] = useState<DisplayHardwareInfo>(() =>
+    RefreshRateDetector.getDisplayInfo()
+  );
+
   // Device Capabilities State (ADPF, GameManager, Thermal, Display Hz)
-  const [deviceCapabilities, setDeviceCapabilities] = useState<DeviceCapabilitiesState>({
-    isNativeAndroid: isNativeAndroidRuntime(),
-    deviceModel: navigator.userAgent.includes('Android') ? 'Android WebView' : 'Browser Preview',
-    androidSdk: 0,
-    maxRefreshHz: 120,
-    supportedRefreshRates: [60, 90, 120],
-    cpuCores: navigator.hardwareConcurrency || 8,
-    cpuMaxClockMhz: 0,
-    thermalStatus: 'UNAVAILABLE',
-    thermalHeadroom: null,
-    adpfSupported: false,
-    gameModeApiSupported: false,
-    gameModeState: 'UNSUPPORTED',
-    vpnFirewallSupported: isNativeAndroidRuntime(),
+  const [deviceCapabilities, setDeviceCapabilities] = useState<DeviceCapabilitiesState>(() => {
+    const initialDisplay = RefreshRateDetector.getDisplayInfo();
+    return {
+      isNativeAndroid: isNativeAndroidRuntime(),
+      deviceModel: navigator.userAgent.includes('Android') ? 'Android WebView' : 'Browser Preview',
+      androidSdk: 0,
+      maxRefreshHz: initialDisplay.maxHz,
+      activeRefreshHz: initialDisplay.activeHz,
+      supportedRefreshRates: initialDisplay.supportedRates,
+      widthPx: initialDisplay.widthPx,
+      heightPx: initialDisplay.heightPx,
+      densityDpi: initialDisplay.densityDpi,
+      cpuCores: navigator.hardwareConcurrency || 8,
+      cpuMaxClockMhz: 0,
+      thermalStatus: 'UNAVAILABLE',
+      thermalHeadroom: null,
+      adpfSupported: false,
+      gameModeApiSupported: false,
+      gameModeState: 'UNSUPPORTED',
+      vpnFirewallSupported: isNativeAndroidRuntime(),
+    };
   });
 
   // Local VPN Firewall State
@@ -929,15 +945,49 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem('fps_booster_auto_approve', JSON.stringify(autoApproveEnabled));
   }, [autoApproveEnabled]);
 
-  // Hardware vsync detection
+  // Hardware display refresh rate & DisplayMetrics detection
   useEffect(() => {
-    const unsub = RefreshRateDetector.addListener((hz) => {
+    const unsub = RefreshRateDetector.addDisplayListener((info) => {
+      setDisplayInfo(info);
       setState(prev => ({
         ...prev,
-        maxHardwareHz: hz > 60 || prev.maxHardwareHz <= 60 ? hz : prev.maxHardwareHz,
+        maxHardwareHz: info.maxHz,
+      }));
+      setDeviceCapabilities(prev => ({
+        ...prev,
+        maxRefreshHz: info.maxHz,
+        activeRefreshHz: info.activeHz,
+        supportedRefreshRates: info.supportedRates,
+        widthPx: info.widthPx,
+        heightPx: info.heightPx,
+        densityDpi: info.densityDpi,
       }));
     });
+    RefreshRateDetector.detectHardwareHz();
     return unsub;
+  }, []);
+
+  const redetectRefreshRate = useCallback(async (): Promise<DisplayHardwareInfo> => {
+    const info = await RefreshRateDetector.detectHardwareHz(true);
+    setDisplayInfo(info);
+    setState(prev => ({
+      ...prev,
+      maxHardwareHz: info.maxHz,
+    }));
+    const caps = await queryDeviceCapabilities(info.maxHz);
+    setDeviceCapabilities({
+      ...caps,
+      maxRefreshHz: info.maxHz,
+      activeRefreshHz: info.activeHz,
+      supportedRefreshRates: info.supportedRates,
+      widthPx: info.widthPx,
+      heightPx: info.heightPx,
+      densityDpi: info.densityDpi,
+    });
+    addLog(
+      `Display probed (${info.detectionSource}): ${info.maxHz}Hz max, ${info.widthPx}x${info.heightPx} @ ${info.densityDpi}dpi`
+    );
+    return info;
   }, []);
 
   // Listen to Real Hardware Stats from RealStatsPlugin / app.js
@@ -953,6 +1003,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const nextTemp = data.temp !== undefined ? parseFloat(data.temp) : (data.temp?.temp ? parseFloat(data.temp.temp) : prev.temperatureC);
         const nextBattery = data.battery !== undefined ? Number(data.battery) : (data.temp?.battery !== undefined ? Number(data.temp.battery) : (prev.batteryLevel ?? 85));
         const nextFps = data.fps !== undefined ? Number(data.fps) : prev.currentFps;
+        const nativeMaxHz = data.isNativeDisplay && data.maxRefreshRate !== undefined ? Math.round(Number(data.maxRefreshRate)) : null;
         const nextStorageFree = data.storageFreeGb !== undefined ? parseFloat(data.storageFreeGb) : prev.storage?.freeGb;
         const nextStorageTotal = data.storageTotalGb !== undefined ? parseFloat(data.storageTotalGb) : prev.storage?.totalGb;
         const nextStoragePct = data.storageUsedPercent !== undefined ? Number(data.storageUsedPercent) : prev.storage?.usedPercent;
@@ -967,7 +1018,10 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
           batteryLevel: isNaN(nextBattery) ? prev.batteryLevel : nextBattery,
           isBatteryCharging: typeof data.isCharging === 'boolean' ? data.isCharging : prev.isBatteryCharging,
           currentFps: isNaN(nextFps) ? prev.currentFps : nextFps,
-          maxHardwareHz: (!isNaN(nextFps) && nextFps >= 60) ? nextFps : prev.maxHardwareHz,
+          maxHardwareHz:
+            nativeMaxHz && !isNaN(nativeMaxHz) && nativeMaxHz >= 30
+              ? nativeMaxHz
+              : prev.maxHardwareHz,
           storage: {
             freeGb: nextStorageFree !== undefined && !isNaN(nextStorageFree) ? nextStorageFree : (prev.storage?.freeGb ?? 28.4),
             totalGb: nextStorageTotal !== undefined && !isNaN(nextStorageTotal) ? nextStorageTotal : (prev.storage?.totalGb ?? 64.0),
@@ -977,6 +1031,28 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
           },
         };
       });
+
+      if (data.isNativeDisplay && data.maxRefreshRate) {
+        const nativeActive = Math.round(Number(data.fps || data.maxRefreshRate));
+        const nativeMax = Math.max(nativeActive, Math.round(Number(data.maxRefreshRate)));
+        const nativeRates =
+          Array.isArray(data.supportedRefreshRates) && data.supportedRefreshRates.length > 0
+            ? data.supportedRefreshRates.map((r: unknown) => Math.round(Number(r))).filter((r: number) => r >= 30)
+            : [nativeMax];
+        setDisplayInfo(prev => ({
+          ...prev,
+          activeHz: nativeActive,
+          maxHz: nativeMax,
+          supportedRates: nativeRates,
+          widthPx: Number(data.widthPixels) > 0 ? Number(data.widthPixels) : prev.widthPx,
+          heightPx: Number(data.heightPixels) > 0 ? Number(data.heightPixels) : prev.heightPx,
+          densityDpi: Number(data.densityDpi) > 0 ? Number(data.densityDpi) : prev.densityDpi,
+          detectionSource: String(data.detectionSource || 'Android WindowManager & DisplayMetrics'),
+          isNativeAndroid: true,
+          isDetecting: false,
+          detectedAt: Date.now(),
+        }));
+      }
     };
 
     window.addEventListener('fpsbooster_realstats', handleRealStats);
@@ -1140,8 +1216,17 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const syncCloudBackend = async () => {
     setCloudBackend(prev => ({ ...prev, status: 'checking' }));
     const conn = await measureFirestoreConnection();
-    const caps = await queryDeviceCapabilities(state.maxHardwareHz);
-    setDeviceCapabilities(caps);
+    const detectedInfo = await RefreshRateDetector.detectHardwareHz();
+    const caps = await queryDeviceCapabilities(detectedInfo.maxHz);
+    setDeviceCapabilities({
+      ...caps,
+      maxRefreshHz: detectedInfo.maxHz,
+      activeRefreshHz: detectedInfo.activeHz,
+      supportedRefreshRates: detectedInfo.supportedRates,
+      widthPx: detectedInfo.widthPx,
+      heightPx: detectedInfo.heightPx,
+      densityDpi: detectedInfo.densityDpi,
+    });
 
     const [remoteCfg, remoteProfs, reports] = await Promise.all([
       fetchRemoteCloudConfig(),
@@ -2263,6 +2348,8 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         cloudBackend,
         syncCloudBackend,
         deviceCapabilities,
+        displayInfo,
+        redetectRefreshRate,
         performanceReports,
         crashDiagnostics,
         logCrashDiagnostic,

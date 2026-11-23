@@ -23,7 +23,7 @@ interface ThermalMonitorPanelProps {
   onApplyCooldown: () => Promise<void>;
 }
 
-const THRESHOLD_OPTIONS = [39, 41, 43];
+const THRESHOLD_OPTIONS = [37, 39, 41, 43];
 
 export const ThermalMonitorPanel: React.FC<ThermalMonitorPanelProps> = ({
   thermal,
@@ -172,7 +172,7 @@ export const ThermalMonitorPanel: React.FC<ThermalMonitorPanelProps> = ({
           type="button"
           onClick={handleScan}
           disabled={isScanning}
-          className="min-h-[36px] px-3 py-1.5 rounded-xl bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 text-cyan-300 text-[10px] font-mono font-bold flex items-center space-x-1.5 cursor-pointer shrink-0 disabled:opacity-60 whitespace-nowrap"
+          className="min-h-[40px] px-3 py-1.5 rounded-xl bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 text-cyan-300 text-[10px] font-mono font-bold flex items-center space-x-1.5 cursor-pointer shrink-0 disabled:opacity-60 whitespace-nowrap"
         >
           <RefreshCw className={`w-3 h-3 ${isScanning ? 'animate-spin' : ''}`} />
           <span>{isScanning ? 'Scanning' : 'Scan'}</span>

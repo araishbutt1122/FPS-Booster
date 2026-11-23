@@ -226,23 +226,57 @@ export const GamingDashboard: React.FC = () => {
       )}
 
       {/* Top Game / Boost Profile Status Header */}
-      <div className="p-3 rounded-2xl bg-[#071333] border border-cyan-900/60 flex items-center justify-between gap-2">
+      <div className={`p-3 rounded-2xl border flex items-center justify-between gap-2 transition-colors ${
+        thermalMonitor.severity === 'critical'
+          ? 'bg-red-950/45 border-red-500/70'
+          : thermalMonitor.isHighTempWarning || thermalMonitor.severity === 'high'
+          ? 'bg-orange-950/40 border-orange-500/70'
+          : 'bg-[#071333] border-cyan-900/60'
+      }`}>
         <div className="flex items-center space-x-2.5 min-w-0 flex-1">
-          <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-400/50 flex items-center justify-center text-cyan-400 shrink-0">
-            <Zap className="w-4 h-4" />
+          <div className={`w-8 h-8 rounded-xl border flex items-center justify-center shrink-0 ${
+            thermalMonitor.severity === 'critical'
+              ? 'bg-red-500/20 border-red-400/70 text-red-300'
+              : thermalMonitor.isHighTempWarning || thermalMonitor.severity === 'high'
+              ? 'bg-orange-500/20 border-orange-400/70 text-orange-300'
+              : 'bg-cyan-500/20 border-cyan-400/50 text-cyan-400'
+          }`}>
+            {thermalMonitor.isHighTempWarning || thermalMonitor.severity === 'high' || thermalMonitor.severity === 'critical' ? (
+              <AlertTriangle className="w-4 h-4" />
+            ) : (
+              <Zap className="w-4 h-4" />
+            )}
           </div>
           <div className="min-w-0">
             <h3 className="font-orbitron font-bold text-xs text-white break-words">
               {activeGame ? activeGame.name : 'High Priority Boost'}
             </h3>
-            <p className="text-[10px] text-cyan-400 font-mono break-words">
-              {activeGame ? activeGame.packageName : 'All Games Whitelisted'}
+            <p className="text-[10px] text-cyan-400 font-mono break-words tabular-nums">
+              {activeGame ? activeGame.packageName : 'All Games Whitelisted'} · {thermalMonitor.currentTempC.toFixed(1)}°C
             </p>
           </div>
         </div>
 
-        <span className="text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-700/60 px-2.5 py-0.5 rounded-full font-mono font-bold whitespace-nowrap shrink-0">
-          RUNNING
+        <span className={`text-[10px] border px-2.5 py-0.5 rounded-full font-mono font-bold whitespace-nowrap shrink-0 flex items-center space-x-1 tabular-nums ${
+          thermalMonitor.severity === 'critical'
+            ? 'bg-red-950 text-red-300 border-red-500/70'
+            : thermalMonitor.isHighTempWarning || thermalMonitor.severity === 'high'
+            ? 'bg-orange-950 text-orange-300 border-orange-500/70'
+            : 'bg-emerald-950 text-emerald-400 border-emerald-700/60'
+        }`}>
+          {thermalMonitor.severity === 'critical' ? (
+            <>
+              <AlertTriangle className="w-3 h-3 shrink-0" />
+              <span>CRITICAL {thermalMonitor.currentTempC.toFixed(0)}°C</span>
+            </>
+          ) : thermalMonitor.isHighTempWarning || thermalMonitor.severity === 'high' ? (
+            <>
+              <Flame className="w-3 h-3 shrink-0" />
+              <span>HIGH TEMP {thermalMonitor.currentTempC.toFixed(0)}°C</span>
+            </>
+          ) : (
+            <span>RUNNING</span>
+          )}
         </span>
       </div>
 

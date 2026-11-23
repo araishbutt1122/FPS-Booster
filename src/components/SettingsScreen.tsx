@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Shield, 
   Rocket, 
@@ -31,6 +31,8 @@ export const SettingsScreen: React.FC = () => {
     cloudBackend,
     syncCloudBackend,
     deviceCapabilities,
+    displayInfo,
+    redetectRefreshRate,
     performanceReports,
     crashDiagnostics,
     submitManualPerformanceSnapshot,
@@ -43,7 +45,21 @@ export const SettingsScreen: React.FC = () => {
   const [adminPin, setAdminPin] = useState('');
   const [adminPinError, setAdminPinError] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [isProbingDisplay, setIsProbingDisplay] = useState(false);
   const logoTapRef = useRef({ count: 0, lastTime: 0 });
+
+  useEffect(() => {
+    let active = true;
+    setIsProbingDisplay(true);
+    redetectRefreshRate()
+      .catch(() => {})
+      .finally(() => {
+        if (active) setIsProbingDisplay(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [redetectRefreshRate]);
 
   const handleFooterLogoTap = () => {
     const now = Date.now();
@@ -313,41 +329,76 @@ export const SettingsScreen: React.FC = () => {
 
       {/* Hardware & System Information */}
       <div className="bg-[#071129]/90 border border-cyan-900/50 rounded-2xl p-4 shadow-xl space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-1">
-          <h3 className="font-orbitron font-bold text-xs text-cyan-300 uppercase tracking-wider flex items-center space-x-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="font-orbitron font-bold text-xs text-cyan-300 uppercase tracking-wider flex items-center space-x-1.5 min-w-0">
             <Smartphone className="w-4 h-4 text-cyan-400 shrink-0" />
-            <span>{isUr ? 'Device Hardware Status' : 'Device Hardware Status'}</span>
+            <span className="truncate">{isUr ? 'Device Hardware Status' : 'Device Hardware Status'}</span>
           </h3>
-          <span className="text-[10px] text-emerald-300 font-mono font-bold">
-            Detected: {Number(state.totalRamGb || 4).toFixed(1)} GB RAM, {state.maxHardwareHz}Hz Max
+          <button
+            type="button"
+            disabled={isProbingDisplay || displayInfo.isDetecting}
+            onClick={async () => {
+              sound.playClick();
+              setIsProbingDisplay(true);
+              try {
+                const info = await redetectRefreshRate();
+                showToast(
+                  `Detected ${info.maxHz} Hz (${info.widthPx}×${info.heightPx} · ${info.densityDpi} dpi)`
+                );
+              } finally {
+                setIsProbingDisplay(false);
+              }
+            }}
+            className="px-2.5 py-1 rounded-lg bg-cyan-500/20 border border-cyan-500/50 text-cyan-300 text-[10px] font-mono font-bold flex items-center space-x-1 shrink-0 cursor-pointer disabled:opacity-60"
+          >
+            <RefreshCw className={`w-3 h-3 ${isProbingDisplay || displayInfo.isDetecting ? 'animate-spin' : ''}`} />
+            <span>{isProbingDisplay || displayInfo.isDetecting ? 'Detecting' : 'Re-scan'}</span>
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between text-[10px] text-emerald-300 font-mono font-bold tabular-nums bg-[#050c1f] px-3 py-1.5 rounded-xl border border-cyan-950">
+          <span>
+            Detected: {Number(state.totalRamGb || 4).toFixed(1)} GB RAM · {displayInfo.maxHz}Hz Max
+          </span>
+          <span className="text-slate-400 font-normal">
+            {displayInfo.widthPx}×{displayInfo.heightPx} · {displayInfo.densityDpi} dpi
           </span>
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div className="bg-[#050c1f] p-2.5 rounded-xl border border-cyan-950">
             <span className="text-[10px] text-slate-400 block font-mono">DETECTED REFRESH RATE</span>
-            <span className="font-orbitron font-bold text-sm text-cyan-300">
-              {state.maxHardwareHz} Hz Max
+            <span className="font-orbitron font-bold text-sm text-cyan-300 tabular-nums block">
+              {displayInfo.maxHz} Hz Max
+            </span>
+            <span className="text-[9px] text-slate-400 font-mono block mt-0.5 tabular-nums">
+              {displayInfo.activeHz !== displayInfo.maxHz
+                ? `Active ${displayInfo.activeHz}Hz · `
+                : ''}
+              Modes: {displayInfo.supportedRates.join('/')}Hz
             </span>
           </div>
 
           <div className="bg-[#050c1f] p-2.5 rounded-xl border border-cyan-950">
-            <span className="text-[10px] text-slate-400 block font-mono">VSYNC</span>
-            <span className="font-orbitron font-bold text-sm text-emerald-400">
-              ON
+            <span className="text-[10px] text-slate-400 block font-mono">DISPLAY METRICS</span>
+            <span className="font-orbitron font-bold text-sm text-emerald-400 tabular-nums block">
+              {displayInfo.widthPx}×{displayInfo.heightPx}
+            </span>
+            <span className="text-[9px] text-slate-400 font-mono block mt-0.5 truncate">
+              {displayInfo.densityDpi} DPI · {displayInfo.isNativeAndroid ? 'Android DisplayMetrics' : 'Web DisplayMetrics'}
             </span>
           </div>
 
           <div className="bg-[#050c1f] p-2.5 rounded-xl border border-cyan-950">
             <span className="text-[10px] text-slate-400 block font-mono">AVAILABLE STORAGE</span>
-            <span className="font-sans font-extrabold text-sm tracking-wide text-emerald-300">
+            <span className="font-sans font-extrabold text-sm tracking-wide text-emerald-300 tabular-nums">
               {Number(state.storage?.freeGb ?? 28.4).toFixed(1)} / {Number(state.storage?.totalGb ?? 64).toFixed(1)} GB
             </span>
           </div>
 
           <div className="bg-[#050c1f] p-2.5 rounded-xl border border-cyan-950">
             <span className="text-[10px] text-slate-400 block font-mono">TOTAL RAM</span>
-            <span className="font-sans font-extrabold text-sm tracking-wide text-cyan-300">
+            <span className="font-sans font-extrabold text-sm tracking-wide text-cyan-300 tabular-nums">
               {Number(state.totalRamGb || 4).toFixed(1)} GB RAM
             </span>
           </div>

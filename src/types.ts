@@ -162,12 +162,29 @@ export interface FirewallState {
   previousSnapshotEnabled: boolean | null;
 }
 
+export interface DisplayHardwareInfo {
+  activeHz: number;
+  maxHz: number;
+  supportedRates: number[];
+  widthPx: number;
+  heightPx: number;
+  densityDpi: number;
+  detectionSource: string;
+  isNativeAndroid: boolean;
+  isDetecting: boolean;
+  detectedAt: number;
+}
+
 export interface DeviceCapabilitiesState {
   isNativeAndroid: boolean;
   deviceModel: string;
   androidSdk: number;
   maxRefreshHz: number;
+  activeRefreshHz?: number;
   supportedRefreshRates: number[];
+  widthPx?: number;
+  heightPx?: number;
+  densityDpi?: number;
   cpuCores: number;
   cpuMaxClockMhz: number;
   thermalStatus: 'NONE' | 'LIGHT' | 'MODERATE' | 'SEVERE' | 'CRITICAL' | 'UNAVAILABLE';

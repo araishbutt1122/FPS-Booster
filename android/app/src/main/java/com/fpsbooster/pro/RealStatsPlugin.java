@@ -9,9 +9,11 @@ import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Environment;
 import android.os.StatFs;
+import android.util.DisplayMetrics;
 import android.view.Display;
 import android.view.WindowManager;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -19,10 +21,148 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 @CapacitorPlugin(name = "RealStats")
 public class RealStatsPlugin extends Plugin {
+
+    private static final class DisplayHardwareSnapshot {
+        int activeHz = 60;
+        int maxHz = 60;
+        List<Integer> supportedRates = Collections.singletonList(60);
+        int widthPixels = 0;
+        int heightPixels = 0;
+        int densityDpi = 0;
+        float density = 1.0f;
+        int xdpi = 0;
+        int ydpi = 0;
+    }
+
+    private DisplayHardwareSnapshot readDisplayHardwareSnapshot(Context ctx, Activity act) {
+        DisplayHardwareSnapshot snap = new DisplayHardwareSnapshot();
+        WindowManager wm = null;
+        if (act != null) {
+            wm = (WindowManager) act.getSystemService(Context.WINDOW_SERVICE);
+        }
+        if (wm == null && ctx != null) {
+            wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
+        }
+
+        Display display = null;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && act != null) {
+            display = act.getDisplay();
+        }
+        if (display == null && wm != null) {
+            display = wm.getDefaultDisplay();
+        }
+
+        float activeRate = 60.0f;
+        float maxRate = 60.0f;
+        Set<Integer> rateSet = new LinkedHashSet<>();
+
+        if (display != null) {
+            float currentRate = display.getRefreshRate();
+            if (currentRate > 0f) {
+                activeRate = currentRate;
+                maxRate = currentRate;
+                rateSet.add(Math.round(currentRate));
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    Display.Mode[] modes = display.getSupportedModes();
+                    if (modes != null) {
+                        for (Display.Mode m : modes) {
+                            float modeHz = m.getRefreshRate();
+                            if (modeHz > 0f) {
+                                int rounded = Math.round(modeHz);
+                                rateSet.add(rounded);
+                                if (modeHz > maxRate) {
+                                    maxRate = modeHz;
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+
+        DisplayMetrics dm = new DisplayMetrics();
+        if (ctx != null && ctx.getResources() != null) {
+            dm.setTo(ctx.getResources().getDisplayMetrics());
+        }
+        if (display != null && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            try {
+                display.getRealMetrics(dm);
+            } catch (Exception ignored) {}
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && wm != null) {
+            try {
+                android.graphics.Rect bounds = wm.getMaximumWindowMetrics().getBounds();
+                if (bounds.width() > 0 && bounds.height() > 0) {
+                    dm.widthPixels = bounds.width();
+                    dm.heightPixels = bounds.height();
+                }
+            } catch (Exception ignored) {}
+        }
+
+        snap.activeHz = Math.max(30, Math.round(activeRate));
+        snap.maxHz = Math.max(snap.activeHz, Math.round(maxRate));
+
+        if (rateSet.isEmpty()) {
+            rateSet.add(snap.activeHz);
+        }
+        List<Integer> sortedRates = new ArrayList<>(rateSet);
+        Collections.sort(sortedRates);
+        snap.supportedRates = sortedRates;
+
+        snap.widthPixels = dm.widthPixels;
+        snap.heightPixels = dm.heightPixels;
+        snap.densityDpi = dm.densityDpi;
+        snap.density = dm.density;
+        snap.xdpi = Math.round(dm.xdpi);
+        snap.ydpi = Math.round(dm.ydpi);
+
+        return snap;
+    }
+
+    /**
+     * Explicit Android DisplayMetrics & WindowManager hardware refresh rate endpoint
+     */
+    @PluginMethod
+    public void getDisplayMetrics(PluginCall call) {
+        try {
+            DisplayHardwareSnapshot snap = readDisplayHardwareSnapshot(getContext(), getActivity());
+            JSArray ratesArray = new JSArray();
+            for (Integer r : snap.supportedRates) {
+                ratesArray.put(r);
+            }
+
+            JSObject ret = new JSObject();
+            ret.put("fps", snap.activeHz);
+            ret.put("refreshRate", snap.activeHz);
+            ret.put("activeRefreshRate", snap.activeHz);
+            ret.put("maxRefreshRate", snap.maxHz);
+            ret.put("supportedRefreshRates", ratesArray);
+            ret.put("widthPixels", snap.widthPixels);
+            ret.put("heightPixels", snap.heightPixels);
+            ret.put("densityDpi", snap.densityDpi);
+            ret.put("density", snap.density);
+            ret.put("xdpi", snap.xdpi);
+            ret.put("ydpi", snap.ydpi);
+            ret.put("detectionSource", "Android DisplayMetrics & WindowManager");
+            ret.put("isNativeDisplay", true);
+
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("RealStats DisplayMetrics Error: " + e.getMessage());
+        }
+    }
 
     /**
      * Real Hardware RAM Information (Total, Used, Available, Percent)
@@ -109,39 +249,29 @@ public class RealStatsPlugin extends Plugin {
     }
 
     /**
-     * Real Screen Display Refresh Rate / Target FPS (Supports API 23 to API 35+)
+     * Real Screen Display Refresh Rate & DisplayMetrics (WindowManager + Display.getSupportedModes)
      */
     @PluginMethod
     public void getRealFPS(PluginCall call) {
         try {
-            float refreshRate = 60.0f;
-            Activity act = getActivity();
-
-            if (act != null) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    // Android 11+ (API 30+) safe display query
-                    Display display = act.getDisplay();
-                    if (display != null) {
-                        refreshRate = display.getRefreshRate();
-                    }
-                } else {
-                    // Android 6.0 to Android 10 (API 23 to 29) backwards-compatible fallback
-                    WindowManager wm = (WindowManager) act.getSystemService(Context.WINDOW_SERVICE);
-                    if (wm != null) {
-                        Display display = wm.getDefaultDisplay();
-                        if (display != null) {
-                            refreshRate = display.getRefreshRate();
-                        }
-                    }
-                }
+            DisplayHardwareSnapshot snap = readDisplayHardwareSnapshot(getContext(), getActivity());
+            JSArray ratesArray = new JSArray();
+            for (Integer r : snap.supportedRates) {
+                ratesArray.put(r);
             }
 
-            int fpsInt = Math.round(refreshRate);
-            if (fpsInt <= 0) fpsInt = 60;
-
             JSObject ret = new JSObject();
-            ret.put("fps", fpsInt);
-            ret.put("refreshRate", fpsInt);
+            ret.put("fps", snap.activeHz);
+            ret.put("refreshRate", snap.activeHz);
+            ret.put("maxRefreshRate", snap.maxHz);
+            ret.put("supportedRefreshRates", ratesArray);
+            ret.put("widthPixels", snap.widthPixels);
+            ret.put("heightPixels", snap.heightPixels);
+            ret.put("densityDpi", snap.densityDpi);
+            ret.put("xdpi", snap.xdpi);
+            ret.put("ydpi", snap.ydpi);
+            ret.put("detectionSource", "Android WindowManager & DisplayMetrics");
+            ret.put("isNativeDisplay", true);
 
             call.resolve(ret);
         } catch (Exception e) {
@@ -193,20 +323,12 @@ public class RealStatsPlugin extends Plugin {
                 }
             }
 
-            // 3. FPS
-            float refreshRate = 60.0f;
-            if (act != null) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    Display display = act.getDisplay();
-                    if (display != null) refreshRate = display.getRefreshRate();
-                } else {
-                    WindowManager wm = (WindowManager) act.getSystemService(Context.WINDOW_SERVICE);
-                    if (wm != null && wm.getDefaultDisplay() != null) {
-                        refreshRate = wm.getDefaultDisplay().getRefreshRate();
-                    }
-                }
+            // 3. Display Refresh Rate & DisplayMetrics via WindowManager
+            DisplayHardwareSnapshot dispSnap = readDisplayHardwareSnapshot(ctx, act);
+            JSArray ratesArray = new JSArray();
+            for (Integer r : dispSnap.supportedRates) {
+                ratesArray.put(r);
             }
-            int fpsInt = Math.max(30, Math.round(refreshRate));
 
             // 4. Real Storage (StatFs) & App Temp Cache
             double[] storageMetrics = readStorageMetrics(ctx);
@@ -218,7 +340,14 @@ public class RealStatsPlugin extends Plugin {
             ret.put("percent", ramPercent);
             ret.put("temp", String.format(Locale.US, "%.1f", tempC));
             ret.put("battery", batteryLevel);
-            ret.put("fps", fpsInt);
+            ret.put("fps", dispSnap.activeHz);
+            ret.put("maxRefreshRate", dispSnap.maxHz);
+            ret.put("supportedRefreshRates", ratesArray);
+            ret.put("widthPixels", dispSnap.widthPixels);
+            ret.put("heightPixels", dispSnap.heightPixels);
+            ret.put("densityDpi", dispSnap.densityDpi);
+            ret.put("detectionSource", "Android WindowManager & DisplayMetrics");
+            ret.put("isNativeDisplay", true);
             ret.put("storageTotalGb", String.format(Locale.US, "%.1f", storageMetrics[0]));
             ret.put("storageFreeGb", String.format(Locale.US, "%.1f", storageMetrics[1]));
             ret.put("storageUsedPercent", (int) Math.round(storageMetrics[2]));

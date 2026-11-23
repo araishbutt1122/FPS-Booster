@@ -36,7 +36,12 @@ interface GamingEnginePluginInterface {
     cpuCores?: number;
     cpuCurMhz?: number;
     cpuMaxMhz?: number;
+    activeRefreshHz?: number;
     maxSupportedHz?: number;
+    supportedRefreshRates?: number[];
+    widthPixels?: number;
+    heightPixels?: number;
+    densityDpi?: number;
     adpfSupported?: boolean;
     adpfPreferredNanos?: number;
     gameModeApiSupported?: boolean;
@@ -177,12 +182,22 @@ export async function queryDeviceCapabilities(detectedHz: number): Promise<Devic
           ? native.gameModeLabel
           : 'UNSUPPORTED';
 
+      const resolvedMaxHz = native.maxSupportedHz || detectedHz || 60;
+      const nativeRates =
+        Array.isArray(native.supportedRefreshRates) && native.supportedRefreshRates.length > 0
+          ? native.supportedRefreshRates.map((r) => Math.round(Number(r))).filter((r) => r >= 30)
+          : Array.from(new Set([60, 90, 120, resolvedMaxHz].filter((hz) => hz <= resolvedMaxHz))).sort((a, b) => a - b);
+
       return {
         isNativeAndroid: true,
         deviceModel: `${native.manufacturer || 'Android'} ${native.model || 'Device'}`.trim(),
         androidSdk: native.sdkInt || 33,
-        maxRefreshHz: native.maxSupportedHz || detectedHz || 60,
-        supportedRefreshRates: [60, 90, 120].filter((hz) => hz <= (native.maxSupportedHz || detectedHz || 60)),
+        maxRefreshHz: resolvedMaxHz,
+        activeRefreshHz: native.activeRefreshHz || resolvedMaxHz,
+        supportedRefreshRates: nativeRates.length > 0 ? nativeRates : [resolvedMaxHz],
+        widthPx: native.widthPixels || undefined,
+        heightPx: native.heightPixels || undefined,
+        densityDpi: native.densityDpi || undefined,
         cpuCores: native.cpuCores || navigator.hardwareConcurrency || 8,
         cpuMaxClockMhz: native.cpuMaxMhz || 2400,
         thermalStatus: validThermal,
@@ -197,12 +212,25 @@ export async function queryDeviceCapabilities(detectedHz: number): Promise<Devic
     }
   }
 
+  const webMaxHz = detectedHz || 60;
+  const webRates = Array.from(
+    new Set([60, ...(webMaxHz >= 75 && webMaxHz < 90 ? [webMaxHz] : []), ...(webMaxHz >= 90 ? [90] : []), ...(webMaxHz >= 120 ? [120] : []), ...(webMaxHz > 120 ? [webMaxHz] : [])])
+  ).filter((hz) => hz <= webMaxHz).sort((a, b) => a - b);
+
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+  const wPx = typeof window !== 'undefined' && window.screen?.width ? Math.round(window.screen.width * dpr) : undefined;
+  const hPx = typeof window !== 'undefined' && window.screen?.height ? Math.round(window.screen.height * dpr) : undefined;
+
   return {
     isNativeAndroid: false,
     deviceModel: navigator.userAgent.includes('Android') ? 'Android WebView' : 'Browser Preview',
     androidSdk: 0,
-    maxRefreshHz: detectedHz || 60,
-    supportedRefreshRates: [60, ...(detectedHz >= 90 ? [90] : []), ...(detectedHz >= 120 ? [120] : [])],
+    maxRefreshHz: webMaxHz,
+    activeRefreshHz: webMaxHz,
+    supportedRefreshRates: webRates.length > 0 ? webRates : [webMaxHz],
+    widthPx: wPx,
+    heightPx: hPx,
+    densityDpi: Math.round(dpr * 160),
     cpuCores: navigator.hardwareConcurrency || 4,
     cpuMaxClockMhz: 0,
     thermalStatus: 'UNAVAILABLE',

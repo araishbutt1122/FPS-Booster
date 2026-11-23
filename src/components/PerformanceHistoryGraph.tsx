@@ -279,10 +279,29 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
       .attr('fill', 'transparent')
       .style('cursor', 'crosshair')
       .on('mousemove touchmove', function (event: MouseEvent | TouchEvent) {
-        const [mx] = d3.pointer(event, this);
+        const touchList =
+          'touches' in event && event.touches.length > 0
+            ? event.touches
+            : 'changedTouches' in event && event.changedTouches.length > 0
+            ? event.changedTouches
+            : null;
+        const pointSource = touchList ? touchList[0] : (event as MouseEvent);
+        if (!pointSource || !Number.isFinite(pointSource.clientX)) return;
+
+        const rect = this.getBoundingClientRect();
+        if (!rect || rect.width <= 0) return;
+
+        const mx = Math.max(
+          0,
+          Math.min(innerW, ((pointSource.clientX - rect.left) / rect.width) * innerW)
+        );
+        if (!Number.isFinite(mx)) return;
+
         const hoveredDate = xScale.invert(mx).getTime();
+        if (!Number.isFinite(hoveredDate)) return;
+
         const idx = bisectTime(series, hoveredDate, 1);
-        const d0 = series[idx - 1];
+        const d0 = series[Math.max(0, idx - 1)];
         const d1 = series[idx] || d0;
         const nearest =
           !d1 || hoveredDate - d0.timestamp < d1.timestamp - hoveredDate ? d0 : d1;
@@ -291,12 +310,14 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
           focusGroup.style('display', null);
           const cx = xScale(new Date(nearest.timestamp));
           const cy = yScale(nearest.fps);
-          focusGroup.select('.focus-line').attr('x1', cx).attr('x2', cx);
-          focusGroup.select('circle').attr('cx', cx).attr('cy', cy);
+          if (Number.isFinite(cx) && Number.isFinite(cy)) {
+            focusGroup.select('.focus-line').attr('x1', cx).attr('x2', cx);
+            focusGroup.select('circle').attr('cx', cx).attr('cy', cy);
+          }
           setHoveredPoint(nearest);
         }
       })
-      .on('mouseleave touchend', () => {
+      .on('mouseleave touchend touchcancel', () => {
         focusGroup.style('display', 'none');
         setHoveredPoint(null);
       });

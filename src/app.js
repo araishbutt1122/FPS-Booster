@@ -90,7 +90,12 @@ async function getBrowserFallbackStats() {
   } catch (err) {}
 
   const screenObj = typeof window !== 'undefined' ? window.screen : null;
-  const fps = screenObj && screenObj['refreshRate'] ? screenObj['refreshRate'] : 60;
+  const cachedDisplay = typeof window !== 'undefined' ? window['__FPS_BOOSTER_DISPLAY_INFO__'] : null;
+  const fps =
+    (cachedDisplay && cachedDisplay.maxHz) ||
+    (screenObj && screenObj['refreshRate']) ||
+    60;
+  const dpr = typeof window !== 'undefined' ? Math.max(1, window.devicePixelRatio || 1) : 1;
   const storage = await getBrowserStorageEstimate();
 
   return {
@@ -101,7 +106,15 @@ async function getBrowserFallbackStats() {
       percent,
     },
     temp: { temp: tempC, battery: batteryLevel, isCharging },
-    fps: { fps, refreshRate: fps },
+    fps: {
+      fps,
+      refreshRate: fps,
+      maxRefreshRate: fps,
+      widthPixels: screenObj?.width ? Math.round(screenObj.width * dpr) : undefined,
+      heightPixels: screenObj?.height ? Math.round(screenObj.height * dpr) : undefined,
+      densityDpi: Math.round(dpr * 160),
+      isNativeDisplay: false,
+    },
     storage,
   };
 }
@@ -193,7 +206,17 @@ export async function updateRealStats() {
           percent: all.percent,
         };
         temp = { temp: all.temp, battery: all.battery };
-        fps = { fps: all.fps, refreshRate: all.fps };
+        fps = {
+          fps: all.fps,
+          refreshRate: all.fps,
+          maxRefreshRate: all.maxRefreshRate || all.fps,
+          supportedRefreshRates: all.supportedRefreshRates,
+          widthPixels: all.widthPixels,
+          heightPixels: all.heightPixels,
+          densityDpi: all.densityDpi,
+          detectionSource: all.detectionSource,
+          isNativeDisplay: Boolean(all.isNativeDisplay ?? true),
+        };
         storage = {
           totalGb: all.storageTotalGb,
           freeGb: all.storageFreeGb,
@@ -239,6 +262,13 @@ export async function updateRealStats() {
       battery: temp?.battery,
       isCharging: temp?.isCharging,
       fps: fps?.fps,
+      maxRefreshRate: fps?.maxRefreshRate,
+      supportedRefreshRates: fps?.supportedRefreshRates,
+      widthPixels: fps?.widthPixels,
+      heightPixels: fps?.heightPixels,
+      densityDpi: fps?.densityDpi,
+      detectionSource: fps?.detectionSource,
+      isNativeDisplay: Boolean(fps?.isNativeDisplay),
       storageFreeGb: storage?.freeGb,
       storageTotalGb: storage?.totalGb,
       storageUsedPercent: storage?.usedPercent,

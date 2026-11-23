@@ -193,17 +193,56 @@ public class GamingEnginePlugin extends Plugin {
             }
         }
 
+        float activeRefreshHz = 60f;
         float maxRefreshHz = 60f;
-        if (act != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Display d = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ? act.getDisplay() : act.getWindowManager().getDefaultDisplay();
-            if (d != null) {
-                maxRefreshHz = d.getRefreshRate();
+        java.util.Set<Integer> supportedRateSet = new java.util.LinkedHashSet<>();
+        WindowManager wm = (WindowManager) (act != null
+            ? act.getSystemService(Context.WINDOW_SERVICE)
+            : (ctx != null ? ctx.getSystemService(Context.WINDOW_SERVICE) : null));
+        Display d = null;
+        if (act != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            d = act.getDisplay();
+        }
+        if (d == null && wm != null) {
+            d = wm.getDefaultDisplay();
+        }
+        if (d != null) {
+            activeRefreshHz = d.getRefreshRate();
+            maxRefreshHz = activeRefreshHz;
+            supportedRateSet.add(Math.round(activeRefreshHz));
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 for (Display.Mode m : d.getSupportedModes()) {
-                    if (m.getRefreshRate() > maxRefreshHz) {
-                        maxRefreshHz = m.getRefreshRate();
+                    float mr = m.getRefreshRate();
+                    if (mr > 0f) {
+                        supportedRateSet.add(Math.round(mr));
+                        if (mr > maxRefreshHz) {
+                            maxRefreshHz = mr;
+                        }
                     }
                 }
             }
+        }
+        if (supportedRateSet.isEmpty()) supportedRateSet.add(60);
+        java.util.List<Integer> sortedRates = new java.util.ArrayList<>(supportedRateSet);
+        java.util.Collections.sort(sortedRates);
+        JSArray ratesArr = new JSArray();
+        for (Integer r : sortedRates) ratesArr.put(r);
+
+        android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+        if (ctx != null && ctx.getResources() != null) {
+            dm.setTo(ctx.getResources().getDisplayMetrics());
+        }
+        if (d != null && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            try { d.getRealMetrics(dm); } catch (Exception ignored) {}
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && wm != null) {
+            try {
+                android.graphics.Rect bounds = wm.getMaximumWindowMetrics().getBounds();
+                if (bounds.width() > 0 && bounds.height() > 0) {
+                    dm.widthPixels = bounds.width();
+                    dm.heightPixels = bounds.height();
+                }
+            } catch (Exception ignored) {}
         }
 
         int cpuCores = Runtime.getRuntime().availableProcessors();
@@ -220,7 +259,12 @@ public class GamingEnginePlugin extends Plugin {
         ret.put("cpuCores", cpuCores);
         ret.put("cpuCurMhz", cpuCurMhz);
         ret.put("cpuMaxMhz", cpuMaxMhz);
+        ret.put("activeRefreshHz", Math.round(activeRefreshHz));
         ret.put("maxSupportedHz", Math.round(maxRefreshHz));
+        ret.put("supportedRefreshRates", ratesArr);
+        ret.put("widthPixels", dm.widthPixels);
+        ret.put("heightPixels", dm.heightPixels);
+        ret.put("densityDpi", dm.densityDpi);
         ret.put("adpfSupported", adpfSupported);
         ret.put("adpfPreferredNanos", adpfPreferredNanos);
         ret.put("gameModeApiSupported", gameModeSupported);
