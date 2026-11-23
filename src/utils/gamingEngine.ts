@@ -5,7 +5,27 @@ import {
   DeviceCapabilitiesState
 } from '../types.ts';
 
+import type { PluginListenerHandle } from '@capacitor/core';
+
 interface GamingEnginePluginInterface {
+  getThermalTelemetry(): Promise<{
+    isNativeAndroid?: boolean;
+    temperatureC?: number;
+    batteryTempC?: number;
+    cpuTempC?: number;
+    skinTempC?: number;
+    thermalStatusCode?: number;
+    thermalLabel?: string;
+    thermalHeadroom?: number;
+    batteryLevel?: number;
+    isCharging?: boolean;
+    sensorSource?: string;
+    zones?: { type: string; tempC: number }[];
+  }>;
+  addListener(
+    eventName: 'thermalStatusChanged',
+    listenerFunc: (event: { thermalStatusCode: number; thermalLabel: string }) => void
+  ): Promise<PluginListenerHandle>;
   getDeviceCapabilities(): Promise<{
     isNativeAndroid?: boolean;
     manufacturer?: string;

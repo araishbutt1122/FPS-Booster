@@ -1,14 +1,16 @@
 package com.fpsbooster.pro;
 
 import android.app.Activity;
-import android.app.ActivityManager;
 import android.app.GameManager;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.TrafficStats;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.os.PerformanceHintManager;
 import android.os.PowerManager;
@@ -19,6 +21,7 @@ import android.view.WindowManager;
 
 import androidx.annotation.RequiresApi;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -26,6 +29,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.FileReader;
 import java.util.Locale;
 
@@ -33,13 +37,130 @@ import java.util.Locale;
  * Genuine Android Performance & Network Engine Plugin:
  * - Android Game Mode API (API 31+)
  * - Android Dynamic Performance Framework (ADPF PerformanceHintManager, API 31+)
- * - PowerManager Thermal Status (API 29+) & Thermal Headroom (API 30+)
+ * - PowerManager Thermal Status (API 29+), OnThermalStatusChangedListener & Thermal Headroom (API 30+)
+ * - Kernel Thermal Zones (/sys/class/thermal/thermal_zone*) + Battery Temperature Sensor
  * - Display Refresh Rate / Window Preferred Refresh Rate
  * - TrafficStats + ConnectivityManager real bandwidth & transport capabilities
  */
 @CapacitorPlugin(name = "GamingEngine")
 public class GamingEnginePlugin extends Plugin {
     private Object adpfSessionObj = null;
+    private Object thermalListenerObj = null;
+
+    @Override
+    public void load() {
+        super.load();
+        Context ctx = getContext();
+        if (ctx != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    PowerManager.OnThermalStatusChangedListener listener = status -> {
+                        JSObject event = new JSObject();
+                        event.put("thermalStatusCode", status);
+                        event.put("thermalLabel", mapThermalStatus(status));
+                        notifyListeners("thermalStatusChanged", event);
+                    };
+                    pm.addThermalStatusListener(listener);
+                    thermalListenerObj = listener;
+                }
+            } catch (Exception ignored) {}
+        }
+    }
+
+    @PluginMethod
+    public void getThermalTelemetry(PluginCall call) {
+        Context ctx = getContext();
+        float batteryTempC = 34.0f;
+        int batteryLevel = 100;
+        boolean isCharging = false;
+
+        if (ctx != null) {
+            try {
+                IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+                Intent battery = ctx.registerReceiver(null, filter);
+                if (battery != null) {
+                    int tempRaw = battery.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 340);
+                    if (tempRaw > 0) {
+                        batteryTempC = tempRaw / 10.0f;
+                    }
+                    int levelRaw = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                    int scaleRaw = battery.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+                    if (levelRaw >= 0 && scaleRaw > 0) {
+                        batteryLevel = (int) ((levelRaw / (float) scaleRaw) * 100.0f);
+                    }
+                    int status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+                    isCharging = (status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                                  status == BatteryManager.BATTERY_STATUS_FULL);
+                }
+            } catch (Exception ignored) {}
+        }
+
+        int thermalStatus = -1;
+        String thermalLabel = "UNAVAILABLE";
+        float thermalHeadroom = -1f;
+        if (ctx != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                thermalStatus = pm.getCurrentThermalStatus();
+                thermalLabel = mapThermalStatus(thermalStatus);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try {
+                        thermalHeadroom = pm.getThermalHeadroom(10);
+                    } catch (Exception ignored) {}
+                }
+            }
+        }
+
+        JSArray zones = new JSArray();
+        float cpuTempC = -1f;
+        float skinTempC = -1f;
+        for (int i = 0; i < 16; i++) {
+            File zoneDir = new File("/sys/class/thermal/thermal_zone" + i);
+            if (!zoneDir.exists()) break;
+            String zoneType = readSingleLine("/sys/class/thermal/thermal_zone" + i + "/type");
+            String zoneTempStr = readSingleLine("/sys/class/thermal/thermal_zone" + i + "/temp");
+            if (zoneType == null || zoneTempStr == null) continue;
+            try {
+                float raw = Float.parseFloat(zoneTempStr.trim());
+                float normalizedC = raw > 1000f ? raw / 1000f : (raw > 150f ? raw / 10f : raw);
+                if (normalizedC >= 10f && normalizedC <= 115f) {
+                    JSObject z = new JSObject();
+                    z.put("type", zoneType.trim());
+                    z.put("tempC", Math.round(normalizedC * 10f) / 10f);
+                    zones.put(z);
+
+                    String lower = zoneType.toLowerCase(Locale.US);
+                    if (cpuTempC < 0 && (lower.contains("cpu") || lower.contains("soc") || lower.contains("tsens") || lower.contains("ap"))) {
+                        cpuTempC = normalizedC;
+                    }
+                    if (skinTempC < 0 && (lower.contains("skin") || lower.contains("quiet") || lower.contains("xo"))) {
+                        skinTempC = normalizedC;
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
+        float effectiveTempC = batteryTempC;
+        if (skinTempC > 0f && skinTempC > effectiveTempC) {
+            effectiveTempC = (batteryTempC + skinTempC) / 2.0f;
+        }
+
+        JSObject ret = new JSObject();
+        ret.put("isNativeAndroid", true);
+        ret.put("temperatureC", Math.round(effectiveTempC * 10f) / 10f);
+        ret.put("batteryTempC", Math.round(batteryTempC * 10f) / 10f);
+        if (cpuTempC > 0f) ret.put("cpuTempC", Math.round(cpuTempC * 10f) / 10f);
+        if (skinTempC > 0f) ret.put("skinTempC", Math.round(skinTempC * 10f) / 10f);
+        ret.put("thermalStatusCode", thermalStatus);
+        ret.put("thermalLabel", thermalLabel);
+        ret.put("thermalHeadroom", thermalHeadroom);
+        ret.put("batteryLevel", batteryLevel);
+        ret.put("isCharging", isCharging);
+        ret.put("sensorSource", zones.length() > 0 ? "Android Thermal HAL + Zones" : "Android PowerManager + Battery");
+        ret.put("zones", zones);
+        call.resolve(ret);
+    }
 
     @PluginMethod
     public void getDeviceCapabilities(PluginCall call) {
@@ -142,18 +263,7 @@ public class GamingEnginePlugin extends Plugin {
             });
         }
 
-        // 3. Safe background cache trim when profile prioritizes performance
-        if (ctx != null && ("PERFORMANCE_MODE".equals(profile) || "EXTREME_MODE".equals(profile) || "SMART_BOOST".equals(profile))) {
-            try {
-                ActivityManager am = (ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
-                if (am != null && !gamePackage.isEmpty()) {
-                    // Trims only non-essential cached background processes cleanly within standard API permissions
-                    am.killBackgroundProcesses("com.android.browser");
-                }
-            } catch (Exception ignored) {}
-        }
-
-        // 4. Inspect target game installation & GameMode state
+        // 3. Inspect target game installation & GameMode state (no arbitrary third-party process killing)
         boolean gameInstalled = false;
         if (ctx != null && !gamePackage.isEmpty()) {
             try {
@@ -274,6 +384,14 @@ public class GamingEnginePlugin extends Plugin {
         }
     }
 
+    private String readSingleLine(String path) {
+        try (BufferedReader br = new BufferedReader(new FileReader(path))) {
+            return br.readLine();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     private int readCpuFreqMhz(String path) {
         try (BufferedReader br = new BufferedReader(new FileReader(path))) {
             String line = br.readLine();
@@ -287,6 +405,18 @@ public class GamingEnginePlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && thermalListenerObj instanceof PowerManager.OnThermalStatusChangedListener) {
+            try {
+                Context ctx = getContext();
+                if (ctx != null) {
+                    PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+                    if (pm != null) {
+                        pm.removeThermalStatusListener((PowerManager.OnThermalStatusChangedListener) thermalListenerObj);
+                    }
+                }
+            } catch (Exception ignored) {}
+            thermalListenerObj = null;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && adpfSessionObj instanceof PerformanceHintManager.Session) {
             try {
                 ((PerformanceHintManager.Session) adpfSessionObj).close();

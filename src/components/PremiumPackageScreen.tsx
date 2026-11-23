@@ -59,7 +59,11 @@ export const PremiumPackageScreen: React.FC = () => {
     } else if (selectedMethod === 'easypaisa') {
       window.location.href = `easypaisa://transfer?number=${EASYPAISA_NUMBER}&amount=${selectedPkg.pricePkr}`;
     } else if (selectedMethod === 'binance') {
-      window.open(`https://app.binance.com/qr/dop${BINANCE_PAY_ID}`, '_blank');
+      const a = document.createElement('a');
+      a.href = `https://app.binance.com/qr/dop${BINANCE_PAY_ID}`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.click();
     }
   };
 

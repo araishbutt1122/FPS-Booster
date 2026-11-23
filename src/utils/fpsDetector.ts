@@ -51,13 +51,22 @@ export class RefreshRateDetector {
       this.notify(hz);
     }
 
-    // 3. Measure actual requestAnimationFrame pacing
+    if (typeof document !== 'undefined' && document.hidden) {
+      this.isDetecting = false;
+      return;
+    }
+
+    // 3. Measure actual requestAnimationFrame pacing in one short burst
     let frameCount = 0;
     const startTime = performance.now();
     const samples: number[] = [];
     let lastTime = performance.now();
 
     const sampleFrames = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        this.isDetecting = false;
+        return;
+      }
       const now = performance.now();
       const delta = now - lastTime;
       lastTime = now;
@@ -67,11 +76,11 @@ export class RefreshRateDetector {
       }
       frameCount++;
 
-      if (samples.length < 50 && now - startTime < 1200) {
+      if (samples.length < 40 && now - startTime < 900) {
         requestAnimationFrame(sampleFrames);
       } else {
         const validSamples = samples.filter(d => d > 3 && d < 40);
-        if (validSamples.length > 10) {
+        if (validSamples.length > 8) {
           const avgDelta = validSamples.reduce((a, b) => a + b, 0) / validSamples.length;
           const calculatedHz = Math.round(1000 / avgDelta);
 
@@ -93,7 +102,7 @@ export class RefreshRateDetector {
   }
 }
 
-// Auto-run detection on load
+// Auto-run one detection pass on load
 if (typeof window !== 'undefined') {
   RefreshRateDetector.detectHardwareHz();
 }

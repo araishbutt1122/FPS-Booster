@@ -103,10 +103,14 @@ export const BlockAppsScreen: React.FC = () => {
               <span className={`w-2.5 h-2.5 rounded-full ${firewallState.enabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
               <div>
                 <span className="text-xs font-orbitron font-bold text-white block leading-tight">
-                  Local VPN Firewall {firewallState.enabled ? 'ON' : 'OFF'}
+                  Local VPN Firewall {firewallState.enabled ? (firewallState.isNativeAndroid && !firewallState.hasVpnPermission ? '(Needs Permit)' : 'ON') : 'OFF'}
                 </span>
                 <span className="text-[10px] text-cyan-300/80 font-mono block">
-                  Blocked Data: {firewallState.isNativeAndroid ? formatBytesCompact(firewallState.blockedBytesTotal) : 'Android APK Required for Packet Drop'}
+                  {firewallState.isNativeAndroid
+                    ? firewallState.hasVpnPermission
+                      ? `Blocked Data: ${formatBytesCompact(firewallState.blockedBytesTotal)} • Calls/Alarms Safe`
+                      : 'Tap VPN Permit to enable packet blocking on Android'
+                    : 'Preview Rules Saved • Active VPN Packet Blocking Requires Android APK'}
                 </span>
               </div>
             </div>

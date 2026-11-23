@@ -7,6 +7,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.BatteryManager;
 import android.os.Build;
+import android.os.Environment;
+import android.os.StatFs;
 import android.view.Display;
 import android.view.WindowManager;
 
@@ -16,6 +18,7 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.io.File;
 import java.util.Locale;
 
 @CapacitorPlugin(name = "RealStats")
@@ -205,6 +208,9 @@ public class RealStatsPlugin extends Plugin {
             }
             int fpsInt = Math.max(30, Math.round(refreshRate));
 
+            // 4. Real Storage (StatFs) & App Temp Cache
+            double[] storageMetrics = readStorageMetrics(ctx);
+
             JSObject ret = new JSObject();
             ret.put("total", String.format(Locale.US, "%.1f", totalGB));
             ret.put("used", String.format(Locale.US, "%.1f", usedGB));
@@ -213,10 +219,121 @@ public class RealStatsPlugin extends Plugin {
             ret.put("temp", String.format(Locale.US, "%.1f", tempC));
             ret.put("battery", batteryLevel);
             ret.put("fps", fpsInt);
+            ret.put("storageTotalGb", String.format(Locale.US, "%.1f", storageMetrics[0]));
+            ret.put("storageFreeGb", String.format(Locale.US, "%.1f", storageMetrics[1]));
+            ret.put("storageUsedPercent", (int) Math.round(storageMetrics[2]));
+            ret.put("appTempCacheKb", Math.round(storageMetrics[3]));
 
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("RealStats Error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Real Internal Storage Space (StatFs) & App Sandbox Temp Cache Size
+     */
+    @PluginMethod
+    public void getStorageStats(PluginCall call) {
+        try {
+            Context ctx = getContext();
+            double[] m = readStorageMetrics(ctx);
+            JSObject ret = new JSObject();
+            ret.put("totalGb", String.format(Locale.US, "%.1f", m[0]));
+            ret.put("freeGb", String.format(Locale.US, "%.1f", m[1]));
+            ret.put("usedPercent", (int) Math.round(m[2]));
+            ret.put("appTempCacheKb", Math.round(m[3]));
+            ret.put("isNativeStorage", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("RealStats Storage Error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Clear ONLY this app's temporary cache directories (invoked only after explicit user confirmation)
+     */
+    @PluginMethod
+    public void clearAppTempCache(PluginCall call) {
+        try {
+            Context ctx = getContext();
+            if (ctx == null) {
+                call.reject("Context unavailable");
+                return;
+            }
+            long beforeBytes = getAppCacheBytes(ctx);
+            deleteDirectoryContents(ctx.getCacheDir());
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                deleteDirectoryContents(ctx.getCodeCacheDir());
+            }
+            File extCache = ctx.getExternalCacheDir();
+            if (extCache != null) {
+                deleteDirectoryContents(extCache);
+            }
+            long afterBytes = getAppCacheBytes(ctx);
+            long freedBytes = Math.max(0L, beforeBytes - afterBytes);
+
+            double[] m = readStorageMetrics(ctx);
+            JSObject ret = new JSObject();
+            ret.put("freedKb", Math.round(freedBytes / 1024.0));
+            ret.put("remainingCacheKb", Math.round(afterBytes / 1024.0));
+            ret.put("freeGb", String.format(Locale.US, "%.1f", m[1]));
+            ret.put("totalGb", String.format(Locale.US, "%.1f", m[0]));
+            ret.put("usedPercent", (int) Math.round(m[2]));
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Cache Clear Error: " + e.getMessage());
+        }
+    }
+
+    private double[] readStorageMetrics(Context ctx) {
+        StatFs stat = new StatFs(Environment.getDataDirectory().getPath());
+        long blockSize = stat.getBlockSizeLong();
+        long totalBlocks = stat.getBlockCountLong();
+        long availBlocks = stat.getAvailableBlocksLong();
+
+        double totalGb = (totalBlocks * (double) blockSize) / (1024.0 * 1024.0 * 1024.0);
+        double freeGb = (availBlocks * (double) blockSize) / (1024.0 * 1024.0 * 1024.0);
+        double usedPercent = totalGb > 0 ? Math.max(0.0, Math.min(100.0, ((totalGb - freeGb) / totalGb) * 100.0)) : 0.0;
+        double cacheKb = ctx != null ? (getAppCacheBytes(ctx) / 1024.0) : 0.0;
+        return new double[]{totalGb, freeGb, usedPercent, cacheKb};
+    }
+
+    private long getAppCacheBytes(Context ctx) {
+        long total = 0L;
+        if (ctx == null) return 0L;
+        total += getFolderSize(ctx.getCacheDir());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            total += getFolderSize(ctx.getCodeCacheDir());
+        }
+        File ext = ctx.getExternalCacheDir();
+        if (ext != null) total += getFolderSize(ext);
+        return total;
+    }
+
+    private long getFolderSize(File dir) {
+        if (dir == null || !dir.exists()) return 0L;
+        if (dir.isFile()) return dir.length();
+        long size = 0L;
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                size += f.isDirectory() ? getFolderSize(f) : f.length();
+            }
+        }
+        return size;
+    }
+
+    private void deleteDirectoryContents(File dir) {
+        if (dir == null || !dir.exists() || !dir.isDirectory()) return;
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            if (f.isDirectory()) {
+                deleteDirectoryContents(f);
+            }
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
         }
     }
 }

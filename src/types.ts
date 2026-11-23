@@ -228,6 +228,77 @@ export interface PerformanceReportItem {
   createdAt: number;
 }
 
+export interface StorageStatsState {
+  freeGb: number;
+  totalGb: number;
+  usedPercent: number;
+  appTempCacheKb: number;
+  isNativeStorage: boolean;
+}
+
+export interface PerGameProfile {
+  gamePackage: string;
+  profileMode: OptimizationProfileMode;
+  targetFps: FPSMode;
+  resolutionScale: '720p' | '1080p' | 'native';
+  firewallPreset: FirewallPresetMode;
+  updatedAt: number;
+}
+
+export interface BottleneckItem {
+  id: string;
+  area: 'thermal' | 'ram' | 'network' | 'display' | 'battery';
+  severity: 'info' | 'warning' | 'critical';
+  title: string;
+  detail: string;
+  recommendation: string;
+}
+
+export interface BottleneckReport {
+  level: 'optimal' | 'warning' | 'critical';
+  summary: string;
+  bottlenecks: BottleneckItem[];
+  recommendedFps: FPSMode;
+  recommendedProfile: OptimizationProfileMode;
+}
+
+export type ThermalSeverity = 'normal' | 'warm' | 'high' | 'critical';
+export type ThermalTrend = 'cooling' | 'stable' | 'rising';
+
+export interface ThermalZoneReading {
+  type: string;
+  tempC: number;
+}
+
+export interface ThermalHistoryPoint {
+  timestamp: number;
+  tempC: number;
+  severity: ThermalSeverity;
+}
+
+export interface ThermalMonitorState {
+  currentTempC: number;
+  batteryTempC: number | null;
+  cpuTempC: number | null;
+  skinTempC: number | null;
+  peakSessionTempC: number;
+  severity: ThermalSeverity;
+  trend: ThermalTrend;
+  deltaPerMin: number;
+  thermalStatus: 'NONE' | 'LIGHT' | 'MODERATE' | 'SEVERE' | 'CRITICAL' | 'EMERGENCY' | 'SHUTDOWN' | 'UNAVAILABLE';
+  thermalHeadroom: number | null;
+  cpuPressureState: 'nominal' | 'fair' | 'serious' | 'critical' | null;
+  sensorSource: string;
+  zones: ThermalZoneReading[];
+  history: ThermalHistoryPoint[];
+  isHighTempWarning: boolean;
+  warningMessage: string | null;
+  warningDismissedAt: number | null;
+  alertThresholdC: number;
+  autoCoolEnabled: boolean;
+  lastUpdatedAt: number;
+}
+
 export interface BoosterState {
   isGamingModeOn: boolean;
   isVpnActive: boolean;
@@ -242,6 +313,8 @@ export interface BoosterState {
   batteryLevel: number;
   isBatteryCharging?: boolean;
   pingMs: number;
+  isOnline?: boolean;
+  storage?: StorageStatsState;
   isBoosting: boolean;
   boostTimeRemainingSec: number;
   boostDurationTotalSec: number;
@@ -260,4 +333,6 @@ export interface BoosterState {
   appLock: boolean;
   soundAndHaptics: boolean;
   language: Language;
+  thermalAlertThresholdC?: number;
+  autoCoolOnHighTemp?: boolean;
 }

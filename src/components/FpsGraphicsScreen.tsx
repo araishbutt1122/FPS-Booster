@@ -24,6 +24,9 @@ export const FpsGraphicsScreen: React.FC = () => {
     setCurrentScreen,
     deviceCapabilities,
     applyOptimizationProfile,
+    bottleneckReport,
+    gamesList,
+    updatePerGameProfile,
   } = useBooster();
 
   const [selectedFps, setSelectedFps] = useState<FPSMode>(state.activeFps);
@@ -32,6 +35,7 @@ export const FpsGraphicsScreen: React.FC = () => {
   const [reduceLag, setReduceLag] = useState(state.reduceLag);
   const [improveRendering, setImproveRendering] = useState(state.improveRendering);
   const [antiAliasing, setAntiAliasing] = useState(state.antiAliasing);
+  const [targetGamePkg, setTargetGamePkg] = useState<string>(gamesList[0]?.packageName || 'com.tencent.ig');
   const [appliedToast, setAppliedToast] = useState(false);
 
   const handleSelectFps = (mode: FPSMode) => {
@@ -140,12 +144,20 @@ export const FpsGraphicsScreen: React.FC = () => {
         <div className="flex items-center justify-between mb-3 pb-2 border-b border-cyan-950">
           <div>
             <h3 className="font-orbitron font-bold text-sm text-white">FPS Mode</h3>
-            <p className="text-[11px] text-slate-400">Choose your FPS mode</p>
+            <p className="text-[11px] text-slate-400">
+              Hardware Max: {state.maxHardwareHz}Hz • Recommended: {bottleneckReport.recommendedFps} FPS
+            </p>
           </div>
           <div className="w-6 h-6 rounded-full bg-cyan-950 border border-cyan-800/60 flex items-center justify-center text-cyan-400">
             <Info className="w-3.5 h-3.5" />
           </div>
         </div>
+
+        {Number(selectedFps) > (state.maxHardwareHz || 60) && (
+          <div className="mb-3 p-2.5 rounded-xl bg-amber-950/60 border border-amber-500/60 text-amber-200 text-[10px] font-mono">
+            Display panel supports up to {state.maxHardwareHz}Hz. Android caps visible output at hardware max; engine focuses on frame pacing stability.
+          </div>
+        )}
 
         {/* Radio List */}
         <div className="space-y-2.5">
@@ -348,6 +360,35 @@ export const FpsGraphicsScreen: React.FC = () => {
             No Lag • No Delay
           </span>
         </div>
+      </div>
+
+      {/* Per-Game Profile Save Box */}
+      <div className="bg-[#071129]/90 border border-cyan-900/50 rounded-2xl p-3.5 flex items-center justify-between gap-2 flex-wrap">
+        <select
+          value={targetGamePkg}
+          onChange={(e) => setTargetGamePkg(e.target.value)}
+          aria-label="Target Game for Profile"
+          className="bg-[#040c1f] border border-cyan-800/60 text-xs font-mono text-white rounded-xl px-2.5 py-2 focus:outline-none flex-1 min-w-[140px]"
+        >
+          {gamesList.map(g => (
+            <option key={g.id} value={g.packageName}>{g.name}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => {
+            updatePerGameProfile(targetGamePkg, {
+              targetFps: selectedFps,
+              profileMode: state.activeProfile,
+              resolutionScale: state.resolutionScale,
+            });
+            setAppliedToast(true);
+            setTimeout(() => setAppliedToast(false), 2500);
+          }}
+          className="px-3 py-2 rounded-xl bg-emerald-500/20 border border-emerald-400/70 text-emerald-300 text-xs font-orbitron font-bold cursor-pointer"
+        >
+          Save Per-Game Profile
+        </button>
       </div>
 
       {/* Button: Apply Settings */}

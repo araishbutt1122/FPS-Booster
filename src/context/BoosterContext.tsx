@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   BoosterState,
   ScreenType,
@@ -22,6 +22,10 @@ import {
   SmartSessionState,
   CrashDiagnosticItem,
   PerformanceReportItem,
+  PerGameProfile,
+  BottleneckReport,
+  BottleneckItem,
+  ThermalMonitorState,
 } from '../types.ts';
 import { sound } from '../utils/audio.ts';
 import { RefreshRateDetector } from '../utils/fpsDetector.ts';
@@ -39,19 +43,27 @@ import {
   reportCrashToFirestore,
   savePerformanceReportToFirestore,
   fetchUserPerformanceReports,
+  auth,
   db,
 } from '../utils/firebase.ts';
 import {
   OPTIMIZATION_PROFILES,
+  GamingEngineNative,
   GamingFirewallNative,
   isNativeAndroidRuntime,
   queryDeviceCapabilities,
   engageNativeProfile,
 } from '../utils/gamingEngine.ts';
+import {
+  readSystemThermalData,
+  evaluateThermalReading,
+  startComputePressureObserver,
+} from '../utils/thermalMonitor.ts';
 import { runNetworkSpeedDiagnostics } from '../utils/networkDiagnostics.ts';
 import { scanScreenshotForTid } from '../utils/ocr.ts';
+import { onAuthStateChanged } from 'firebase/auth';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
-import { updateRealStats } from '../app.js';
+import { updateRealStats, clearAppTempCache, getStorageStats } from '../app.js';
 
 // STRICT ONLY 3 PAYMENT DETAILS (AS REQUESTED)
 export const JAZZCASH_NUMBER = '03193191407';
@@ -166,9 +178,12 @@ interface BoosterContextType {
   networkDiagnostics: NetworkDiagnosticsState;
   runFullNetworkDiagnostics: () => Promise<void>;
 
-  // 30-Min FPS History & Optimization Profiles
+  // 30-Min FPS History, Per-Game Profiles & Bottleneck Detector
   fpsHistory: FpsHistoryPoint[];
   applyOptimizationProfile: (profile: OptimizationProfileMode, gamePkg?: string) => Promise<void>;
+  perGameProfiles: Record<string, PerGameProfile>;
+  updatePerGameProfile: (gamePackage: string, patch: Partial<PerGameProfile>) => void;
+  bottleneckReport: BottleneckReport;
 
   // Cloud Backend & Diagnostics
   cloudBackend: CloudBackendState;
@@ -188,6 +203,14 @@ interface BoosterContextType {
   restorePreviousFirewallRules: () => Promise<void>;
   smartSession: SmartSessionState;
 
+  // Device Temperature Monitor & High-Temp Gaming Warnings
+  thermalMonitor: ThermalMonitorState;
+  refreshThermalTelemetry: () => Promise<void>;
+  setThermalAlertThreshold: (celsius: number) => void;
+  toggleAutoCoolOnHighTemp: () => void;
+  dismissThermalWarning: () => void;
+  applyThermalCooldownProfile: () => Promise<void>;
+
   // Actions
   toggleGamingMode: () => void;
   setFpsMode: (mode: FPSMode) => void;
@@ -195,6 +218,8 @@ interface BoosterContextType {
   toggleAllAppsBlock: (blockAll: boolean) => void;
   applyVpnFirewall: () => void;
   cleanRam: () => { freedMb: number; newPercent: number };
+  refreshHardwareTelemetry: () => Promise<void>;
+  clearTemporaryCache: () => Promise<{ freedKb: number; remainingCacheKb: number; freeGb: string; totalGb: string }>;
   applyGraphicsSettings: (settings: Partial<BoosterState>) => void;
   updateSetting: <K extends keyof BoosterState>(key: K, value: BoosterState[K]) => void;
   launchGameWithAutoBoost: (game: GameItem) => void;
@@ -436,7 +461,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     return {
       isGamingModeOn: false,
-      isVpnActive: true,
+      isVpnActive: false,
       activeFps: '60',
       activeProfile: 'SMART_BOOST',
       currentFps: 60,
@@ -448,6 +473,14 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       batteryLevel: 88,
       isBatteryCharging: false,
       pingMs: 58,
+      isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+      storage: {
+        freeGb: 28.4,
+        totalGb: 64.0,
+        usedPercent: 56,
+        appTempCacheKb: 0,
+        isNativeStorage: false,
+      },
       isBoosting: false,
       boostTimeRemainingSec: 0,
       boostDurationTotalSec: 0,
@@ -466,6 +499,40 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       appLock: false,
       soundAndHaptics: true,
       language: 'en',
+    };
+  });
+
+  // Per-Game Optimization Profiles (persisted cleanly per game packageName)
+  const [perGameProfiles, setPerGameProfiles] = useState<Record<string, PerGameProfile>>(() => {
+    try {
+      const raw = localStorage.getItem('fps_booster_per_game_profiles_v1');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return {
+      'com.tencent.ig': {
+        gamePackage: 'com.tencent.ig',
+        profileMode: 'PERFORMANCE_MODE',
+        targetFps: '90',
+        resolutionScale: 'native',
+        firewallPreset: 'esports_strict',
+        updatedAt: Date.now(),
+      },
+      'com.dts.freefireth': {
+        gamePackage: 'com.dts.freefireth',
+        profileMode: 'SMART_BOOST',
+        targetFps: '60',
+        resolutionScale: 'native',
+        firewallPreset: 'social_keep',
+        updatedAt: Date.now(),
+      },
+      'com.activision.callofduty.shooter': {
+        gamePackage: 'com.activision.callofduty.shooter',
+        profileMode: 'EXTREME_MODE',
+        targetFps: '120',
+        resolutionScale: '1080p',
+        firewallPreset: 'esports_strict',
+        updatedAt: Date.now(),
+      },
     };
   });
 
@@ -538,7 +605,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     } catch {}
     return {
-      enabled: state.isVpnActive,
+      enabled: false,
       hasVpnPermission: false,
       isNativeAndroid: isNativeAndroidRuntime(),
       preset: 'custom',
@@ -580,107 +647,145 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [performanceReports, setPerformanceReports] = useState<PerformanceReportItem[]>([]);
   const [crashDiagnostics, setCrashDiagnostics] = useState<CrashDiagnosticItem[]>([]);
 
-  // FIREBASE INITIALIZATION & REAL-TIME FIRESTORE LISTENERS
+  // Device Temperature Monitor State
+  const [thermalMonitor, setThermalMonitor] = useState<ThermalMonitorState>(() => ({
+    currentTempC: state.temperatureC || 34.2,
+    batteryTempC: state.temperatureC || 34.2,
+    cpuTempC: null,
+    skinTempC: null,
+    peakSessionTempC: state.temperatureC || 34.2,
+    severity: 'normal',
+    trend: 'stable',
+    deltaPerMin: 0,
+    thermalStatus: 'UNAVAILABLE',
+    thermalHeadroom: null,
+    cpuPressureState: null,
+    sensorSource: isNativeAndroidRuntime() ? 'Android Thermal HAL + Battery' : 'Browser Hardware Telemetry',
+    zones: [],
+    history: [
+      {
+        timestamp: Date.now(),
+        tempC: state.temperatureC || 34.2,
+        severity: 'normal',
+      },
+    ],
+    isHighTempWarning: false,
+    warningMessage: null,
+    warningDismissedAt: null,
+    alertThresholdC: state.thermalAlertThresholdC ?? 41,
+    autoCoolEnabled: state.autoCoolOnHighTemp ?? false,
+    lastUpdatedAt: Date.now(),
+  }));
+
+  // FIREBASE INITIALIZATION & REAL-TIME FIRESTORE LISTENERS (Auth-gated)
   useEffect(() => {
-    let unsubPayments: () => void;
-    let unsubUser: () => void;
+    let unsubPayments: (() => void) | undefined;
+    let unsubUser: (() => void) | undefined;
 
-    const setupFirebase = async () => {
-      try {
-        const firebaseUser = await ensureAnonymousAuth();
-        const activeUid = firebaseUser ? firebaseUser.uid : userId;
-        setUserId(activeUid);
-        localStorage.setItem('fps_booster_user_uid', activeUid);
+    const attachAuthenticatedListeners = (activeUid: string) => {
+      if (unsubUser) unsubUser();
+      if (unsubPayments) unsubPayments();
 
-        // Sync initial user profile to Firestore
-        syncUserToFirestore({
-          userId: activeUid,
-          name: 'Test User',
-          isPro: state.isPro,
-          proExpiry: state.proExpiresAt,
-          activeFps: state.activeFps,
-          activeProfile: state.activeProfile,
-        });
+      syncUserToFirestore({
+        userId: activeUid,
+        name: auth.currentUser?.displayName || 'Test User',
+        isPro: state.isPro,
+        proExpiry: state.proExpiresAt,
+        activeFps: state.activeFps,
+        activeProfile: state.activeProfile,
+      });
 
-        // 1. Real-time User Profile Listener (PRO turns ON automatically across devices without refresh)
-        const userRef = doc(db, 'users', activeUid);
-        unsubUser = onSnapshot(userRef, (snap) => {
-          if (snap.exists()) {
-            const data = snap.data();
-            if (data.isPro !== undefined) {
-              setState(prev => {
-                if (prev.isPro !== data.isPro) {
-                  if (data.isPro) {
-                    sound.playSuccess();
-                    setSnackBarMessage('Payment Verified - PRO Activated!');
-                    setUserPaymentNotification({
-                      message: 'PRO Activated! Payment Approved by Admin.',
-                      type: 'success'
-                    });
-                  }
-                  return {
-                    ...prev,
-                    isPro: data.isPro,
-                    proExpiresAt: data.proExpiry || null,
-                    activeFps: data.isPro ? '120' : prev.activeFps,
-                    isBoosting: data.isPro ? true : prev.isBoosting,
-                    boostTimeRemainingSec: data.isPro ? 7200 : prev.boostTimeRemainingSec,
-                    boostDurationTotalSec: data.isPro ? 7200 : prev.boostDurationTotalSec,
-                  };
+      const userRef = doc(db, 'users', activeUid);
+      unsubUser = onSnapshot(userRef, (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data.isPro !== undefined) {
+            setState(prev => {
+              if (prev.isPro !== data.isPro) {
+                if (data.isPro) {
+                  sound.playSuccess();
+                  setSnackBarMessage('Payment Verified - PRO Activated!');
+                  setUserPaymentNotification({
+                    message: 'PRO Activated! Payment Approved by Admin.',
+                    type: 'success'
+                  });
                 }
-                return prev;
-              });
-            }
+                return {
+                  ...prev,
+                  isPro: data.isPro,
+                  proExpiresAt: data.proExpiry || null,
+                  activeFps: data.isPro ? '120' : prev.activeFps,
+                  isBoosting: data.isPro ? true : prev.isBoosting,
+                  boostTimeRemainingSec: data.isPro ? 7200 : prev.boostTimeRemainingSec,
+                  boostDurationTotalSec: data.isPro ? 7200 : prev.boostDurationTotalSec,
+                };
+              }
+              return prev;
+            });
           }
-        }, (err) => {
-          console.warn('Firestore user onSnapshot:', err);
+        }
+      }, (err) => {
+        console.warn('Firestore user onSnapshot:', err);
+      });
+
+      const paymentsQuery = query(collection(db, 'payments'), where('userId', '==', activeUid));
+      unsubPayments = onSnapshot(paymentsQuery, (snapshot) => {
+        const liveList: TransactionProof[] = [];
+        snapshot.forEach(docSnap => {
+          const d = docSnap.data();
+          if (['jazzcash', 'easypaisa', 'binance'].includes(d.method)) {
+            liveList.push({
+              id: d.id || docSnap.id,
+              userId: d.userId,
+              packageId: d.packageId || 'pkg_vip_599',
+              packageName: d.packageName || 'PKG VIP 30 Days',
+              amount: d.amount || 599,
+              method: d.method as PaymentMethodType,
+              tid: d.tid,
+              senderName: d.name || d.senderName || 'Gamer',
+              phone: d.phone || '03193191407',
+              screenshotUrl: d.screenshotUrl,
+              screenshotName: d.screenshotName,
+              ocrTid: d.ocrTid,
+              matchStatus: d.matchStatus,
+              note: d.note,
+              status: d.status || 'pending',
+              submittedAt: d.createdAt || Date.now(),
+              reviewedAt: d.reviewedAt,
+            });
+          }
         });
 
-        // 2. Real-time Payments Collection Listener (Owner scoped under hardened rules)
-        const paymentsQuery = query(collection(db, 'payments'), where('userId', '==', activeUid));
-        unsubPayments = onSnapshot(paymentsQuery, (snapshot) => {
-          const liveList: TransactionProof[] = [];
-          snapshot.forEach(docSnap => {
-            const d = docSnap.data();
-            if (['jazzcash', 'easypaisa', 'binance'].includes(d.method)) {
-              liveList.push({
-                id: d.id || docSnap.id,
-                userId: d.userId,
-                packageId: d.packageId || 'pkg_vip_599',
-                packageName: d.packageName || 'PKG VIP 30 Days',
-                amount: d.amount || 599,
-                method: d.method as PaymentMethodType,
-                tid: d.tid,
-                senderName: d.name || d.senderName || 'Gamer',
-                phone: d.phone || '03193191407',
-                screenshotUrl: d.screenshotUrl,
-                screenshotName: d.screenshotName,
-                ocrTid: d.ocrTid,
-                matchStatus: d.matchStatus,
-                note: d.note,
-                status: d.status || 'pending',
-                submittedAt: d.createdAt || Date.now(),
-                reviewedAt: d.reviewedAt,
-              });
-            }
-          });
-
-          if (liveList.length > 0) {
-            liveList.sort((a, b) => b.submittedAt - a.submittedAt);
-            setTransactions(liveList);
-          }
-        }, (err) => {
-          console.warn('Firestore payments onSnapshot:', err);
-        });
-
-      } catch (err) {
-        console.warn('Firebase setup exception:', err);
-      }
+        if (liveList.length > 0) {
+          liveList.sort((a, b) => b.submittedAt - a.submittedAt);
+          setTransactions(liveList);
+        }
+      }, (err) => {
+        console.warn('Firestore payments onSnapshot:', err);
+      });
     };
 
-    setupFirebase();
+    const unsubAuth = onAuthStateChanged(auth, (fbUser) => {
+      if (fbUser) {
+        setUserId(fbUser.uid);
+        localStorage.setItem('fps_booster_user_uid', fbUser.uid);
+        attachAuthenticatedListeners(fbUser.uid);
+      } else {
+        if (unsubUser) {
+          unsubUser();
+          unsubUser = undefined;
+        }
+        if (unsubPayments) {
+          unsubPayments();
+          unsubPayments = undefined;
+        }
+      }
+    });
+
+    ensureAnonymousAuth().catch(() => {});
 
     return () => {
+      unsubAuth();
       if (unsubPayments) unsubPayments();
       if (unsubUser) unsubUser();
     };
@@ -692,46 +797,63 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [isProbing, setIsProbing] = useState<boolean>(false);
   const [lastProbedTime, setLastProbedTime] = useState<string>('Just now');
 
-  const runPingProbe = async () => {
-    setIsProbing(true);
-    const updatedRegions: ServerRegionPing[] = [];
-
-    for (const region of INITIAL_SERVER_REGIONS) {
-      const startTime = performance.now();
-      let measuredPing = region.baseLatencyMs;
-
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 1800);
-
-        await fetch(region.url, {
-          method: 'HEAD',
-          mode: 'no-cors',
-          cache: 'no-store',
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeout);
-        const elapsed = Math.round(performance.now() - startTime);
-        measuredPing = Math.max(16, Math.min(elapsed, 350));
-      } catch {
-        const jitter = Math.floor(Math.random() * 6) - 3;
-        measuredPing = Math.max(20, region.baseLatencyMs + jitter);
-      }
-
-      const calculatedJitter = Number((Math.random() * 1.5 + 0.8).toFixed(1));
-      const status: ServerRegionPing['status'] =
-        measuredPing <= 50 ? 'optimal' : measuredPing <= 100 ? 'good' : 'moderate';
-
-      updatedRegions.push({
-        ...region,
-        currentPingMs: measuredPing,
-        jitterMs: calculatedJitter,
-        status,
-      });
+  const runPingProbe = useCallback(async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setState(prev => ({ ...prev, isOnline: false, pingMs: 0 }));
+      setLastProbedTime('Offline');
+      return;
     }
 
-    // ALWAYS choose the server with the LOWEST ping as ACTIVE ROUTE
+    setIsProbing(true);
+
+    const updatedRegions = await Promise.all(
+      INITIAL_SERVER_REGIONS.map(async (region): Promise<ServerRegionPing> => {
+        const startTime = performance.now();
+        let measuredPing = region.baseLatencyMs;
+        let reachable = false;
+
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 1600);
+
+          await fetch(region.url, {
+            method: 'HEAD',
+            mode: 'no-cors',
+            cache: 'no-store',
+            signal: controller.signal,
+          });
+
+          clearTimeout(timeout);
+          const elapsed = Math.round(performance.now() - startTime);
+          measuredPing = Math.max(12, Math.min(elapsed, 450));
+          reachable = true;
+        } catch {
+          measuredPing = region.baseLatencyMs;
+        }
+
+        const jitterSpread = reachable
+          ? Number(Math.max(0.5, Math.abs(measuredPing - region.baseLatencyMs) * 0.15).toFixed(1))
+          : region.jitterMs;
+
+        const status: ServerRegionPing['status'] = !reachable
+          ? 'moderate'
+          : measuredPing <= 50
+          ? 'optimal'
+          : measuredPing <= 100
+          ? 'good'
+          : 'moderate';
+
+        return {
+          ...region,
+          currentPingMs: measuredPing,
+          jitterMs: jitterSpread,
+          packetLossPercent: reachable ? 0 : 100,
+          status,
+        };
+      })
+    );
+
     const lowestRegion = updatedRegions.reduce(
       (min, r) => (r.currentPingMs < min.currentPingMs ? r : min),
       updatedRegions[0]
@@ -741,11 +863,12 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setSelectedRegionId(lowestRegion.id);
     setState(prev => ({
       ...prev,
+      isOnline: true,
       pingMs: lowestRegion.currentPingMs,
     }));
     setIsProbing(false);
     setLastProbedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-  };
+  }, []);
 
   const selectPingRegion = (regionId: string) => {
     const found = serverRegions.find(r => r.id === regionId);
@@ -760,16 +883,43 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     runPingProbe();
     const interval = setInterval(() => {
+      if (typeof document === 'undefined' || !document.hidden) {
+        runPingProbe();
+      }
+    }, 10000);
+
+    const handleOnline = () => {
+      setState(prev => ({ ...prev, isOnline: true }));
       runPingProbe();
-    }, 8000);
-    return () => clearInterval(interval);
-  }, []);
+    };
+    const handleOffline = () => {
+      setState(prev => ({ ...prev, isOnline: false, pingMs: 0 }));
+      setLastProbedTime('Offline');
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [runPingProbe]);
 
   const activeRegion = serverRegions.find(r => r.id === selectedRegionId) || serverRegions[0];
+
+  // Sync audio mute state cleanly
+  useEffect(() => {
+    sound.setMuted(!state.soundAndHaptics);
+  }, [state.soundAndHaptics]);
 
   useEffect(() => {
     localStorage.setItem('fps_booster_state_v4', JSON.stringify(state));
   }, [state]);
+
+  useEffect(() => {
+    localStorage.setItem('fps_booster_per_game_profiles_v1', JSON.stringify(perGameProfiles));
+  }, [perGameProfiles]);
 
   useEffect(() => {
     localStorage.setItem('fps_booster_apps_v6', JSON.stringify(appsList));
@@ -803,6 +953,10 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const nextTemp = data.temp !== undefined ? parseFloat(data.temp) : (data.temp?.temp ? parseFloat(data.temp.temp) : prev.temperatureC);
         const nextBattery = data.battery !== undefined ? Number(data.battery) : (data.temp?.battery !== undefined ? Number(data.temp.battery) : (prev.batteryLevel ?? 85));
         const nextFps = data.fps !== undefined ? Number(data.fps) : prev.currentFps;
+        const nextStorageFree = data.storageFreeGb !== undefined ? parseFloat(data.storageFreeGb) : prev.storage?.freeGb;
+        const nextStorageTotal = data.storageTotalGb !== undefined ? parseFloat(data.storageTotalGb) : prev.storage?.totalGb;
+        const nextStoragePct = data.storageUsedPercent !== undefined ? Number(data.storageUsedPercent) : prev.storage?.usedPercent;
+        const nextCacheKb = data.appTempCacheKb !== undefined ? Number(data.appTempCacheKb) : prev.storage?.appTempCacheKb;
 
         return {
           ...prev,
@@ -811,8 +965,16 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
           ramUsagePercent: isNaN(nextRamPercent) ? prev.ramUsagePercent : nextRamPercent,
           temperatureC: isNaN(nextTemp) ? prev.temperatureC : nextTemp,
           batteryLevel: isNaN(nextBattery) ? prev.batteryLevel : nextBattery,
+          isBatteryCharging: typeof data.isCharging === 'boolean' ? data.isCharging : prev.isBatteryCharging,
           currentFps: isNaN(nextFps) ? prev.currentFps : nextFps,
           maxHardwareHz: (!isNaN(nextFps) && nextFps >= 60) ? nextFps : prev.maxHardwareHz,
+          storage: {
+            freeGb: nextStorageFree !== undefined && !isNaN(nextStorageFree) ? nextStorageFree : (prev.storage?.freeGb ?? 28.4),
+            totalGb: nextStorageTotal !== undefined && !isNaN(nextStorageTotal) ? nextStorageTotal : (prev.storage?.totalGb ?? 64.0),
+            usedPercent: nextStoragePct !== undefined && !isNaN(nextStoragePct) ? nextStoragePct : (prev.storage?.usedPercent ?? 56),
+            appTempCacheKb: nextCacheKb !== undefined && !isNaN(nextCacheKb) ? nextCacheKb : (prev.storage?.appTempCacheKb ?? 0),
+            isNativeStorage: typeof data.isNativeStorage === 'boolean' ? data.isNativeStorage : (prev.storage?.isNativeStorage ?? false),
+          },
         };
       });
     };
@@ -842,37 +1004,47 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, []);
 
-  // Real FPS calculation via Choreographer / requestAnimationFrame
-  const frameCountRef = useRef(0);
-  const lastTimeRef = useRef(performance.now());
+  // Battery-friendly visibility-aware real frame pacing measurement (burst of 10 frames every 2.5s; zero continuous RAF drain)
   useEffect(() => {
-    let animId: number;
-    const calcFps = (now: number) => {
-      frameCountRef.current++;
-      const elapsed = now - lastTimeRef.current;
-      if (elapsed >= 1000) {
-        frameCountRef.current = 0;
-        lastTimeRef.current = now;
+    let rafId: number | null = null;
+    const measureFramePacingBurst = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      let count = 0;
+      let lastTs = performance.now();
+      const deltas: number[] = [];
 
-        setState(prev => {
-          const targetCap = prev.isBoosting 
-            ? (prev.activeFps === '120' ? 120 : prev.activeFps === '90' ? 90 : 60)
-            : (prev.maxHardwareHz || 60);
-          const cappedTarget = Math.min(targetCap, prev.maxHardwareHz || 120);
-          const fluctuation = Math.floor(Math.random() * 3) - 1;
-          const finalFps = Math.max(20, Math.min(cappedTarget, cappedTarget + fluctuation));
-          
-          return {
-            ...prev,
-            currentFps: finalFps,
-          };
-        });
-      }
-      animId = requestAnimationFrame(calcFps);
+      const step = (now: number) => {
+        if (typeof document !== 'undefined' && document.hidden) return;
+        const delta = now - lastTs;
+        lastTs = now;
+        if (count > 1 && delta > 3 && delta < 50) {
+          deltas.push(delta);
+        }
+        count++;
+        if (count < 12) {
+          rafId = requestAnimationFrame(step);
+        } else if (deltas.length >= 4) {
+          const avgDelta = deltas.reduce((s, d) => s + d, 0) / deltas.length;
+          const measuredFps = Math.round(1000 / avgDelta);
+          setState(prev => {
+            const targetCap = prev.isBoosting
+              ? Math.min(Number(prev.activeFps) || 60, prev.maxHardwareHz || 120)
+              : (prev.maxHardwareHz || 60);
+            const honestFps = Math.max(20, Math.min(targetCap, measuredFps));
+            if (honestFps === prev.currentFps) return prev;
+            return { ...prev, currentFps: honestFps };
+          });
+        }
+      };
+
+      rafId = requestAnimationFrame(step);
     };
 
-    animId = requestAnimationFrame(calcFps);
-    return () => cancelAnimationFrame(animId);
+    const iv = setInterval(measureFramePacingBurst, 2500);
+    return () => {
+      clearInterval(iv);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, []);
 
   // Boost timer countdown logic (AUTO OFF when hits 00:00)
@@ -942,7 +1114,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const tapToBoost = () => {
     sound.playBoost();
-    cleanRam();
+    refreshHardwareTelemetry();
     const duration = state.isPro ? 7200 : 1800; // 2 hrs for PRO, 30 min for regular
     setState(prev => ({
       ...prev,
@@ -951,9 +1123,8 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       boostTimeRemainingSec: Math.max(prev.boostTimeRemainingSec, duration),
       boostDurationTotalSec: Math.max(prev.boostDurationTotalSec, duration),
     }));
-    setSnackBarMessage(state.isPro ? '⚡ Turbo Boosted! PRO VIP 120 Active' : '⚡ Turbo Boosted! +30 Min Boost Active');
+    setSnackBarMessage(state.isPro ? '⚡ Turbo Boosted! PRO VIP Engine Active' : '⚡ Turbo Boosted! +30 Min Session Active');
 
-    // Firestore Users Collection Sync: { name: "Test User", boost: "Done", time: current time }
     syncUserToFirestore({
       userId,
       name: 'Test User',
@@ -962,8 +1133,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       activeFps: state.activeFps,
       totalBoostTime: (state.boostDurationTotalSec || 0) + duration
     });
-    console.log('Data Save Ho Gaya');
-    addLog('Data Save Ho Gaya');
+    addLog('Telemetry & frame-pacing boost session started.');
   };
 
   // Cloud Backend Health + Remote Config + Compatibility Sync
@@ -1074,6 +1244,145 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return () => clearInterval(iv);
   }, []);
 
+  // Live System Thermal Monitor Polling & Gaming Session High-Temperature Warning Engine
+  const thermalRef = useRef(thermalMonitor);
+  thermalRef.current = thermalMonitor;
+  const applyProfileRef = useRef<(profile: OptimizationProfileMode, gamePkg?: string) => Promise<void>>(async () => {});
+  const lastThermalAlertChimeRef = useRef<number>(0);
+  const prevThermalSeverityRef = useRef(thermalMonitor.severity);
+  const isInGamingSessionRef = useRef(false);
+  isInGamingSessionRef.current = Boolean(state.isGamingModeOn || state.isBoosting || smartSession.isActive);
+
+  const refreshThermalTelemetry = useCallback(async () => {
+    const curState = latestStateRef.current;
+    const curThermal = thermalRef.current;
+    const inSession = isInGamingSessionRef.current;
+
+    const sample = await readSystemThermalData({
+      isInGamingSession: inSession,
+      activeFps: Number(curState.activeFps) || 60,
+      isCharging: curState.isBatteryCharging,
+      lastTempC: curThermal.currentTempC,
+    });
+
+    const evaluated = evaluateThermalReading({
+      sample,
+      prevHistory: curThermal.history,
+      peakSessionTempC: inSession ? curThermal.peakSessionTempC : sample.temperatureC,
+      alertThresholdC: curThermal.alertThresholdC,
+      autoCoolEnabled: curThermal.autoCoolEnabled,
+      isInGamingSession: inSession,
+      warningDismissedAt: curThermal.warningDismissedAt,
+    });
+
+    setThermalMonitor(evaluated);
+
+    setState(prev => ({
+      ...prev,
+      temperatureC: evaluated.currentTempC,
+    }));
+
+    const capStatus: DeviceCapabilitiesState['thermalStatus'] =
+      evaluated.thermalStatus === 'EMERGENCY' || evaluated.thermalStatus === 'SHUTDOWN'
+        ? 'CRITICAL'
+        : evaluated.thermalStatus;
+
+    setDeviceCapabilities(prev => ({
+      ...prev,
+      thermalStatus: capStatus,
+      thermalHeadroom: evaluated.thermalHeadroom,
+    }));
+
+    // Trigger high-temperature warning feedback on transition into high/critical during gaming sessions
+    const wasHot = prevThermalSeverityRef.current === 'high' || prevThermalSeverityRef.current === 'critical';
+    const isNowHot = evaluated.severity === 'high' || evaluated.severity === 'critical';
+    prevThermalSeverityRef.current = evaluated.severity;
+
+    if (inSession && isNowHot && (!wasHot || Date.now() - lastThermalAlertChimeRef.current > 45_000)) {
+      lastThermalAlertChimeRef.current = Date.now();
+      addLog(
+        `THERMAL ALERT (${evaluated.severity.toUpperCase()}): ${evaluated.currentTempC.toFixed(1)}°C (OS: ${evaluated.thermalStatus})`
+      );
+      setSnackBarMessage(
+        `High Temp Warning: ${evaluated.currentTempC.toFixed(1)}°C — Risk of FPS throttling`
+      );
+      if (evaluated.autoCoolEnabled && curState.activeProfile !== 'BALANCED_MODE' && curState.activeProfile !== 'BATTERY_SAVER') {
+        await applyProfileRef.current('BALANCED_MODE');
+        addLog('Auto-Cool Engaged: Switched to 60 FPS Balanced profile due to high temperature.');
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const stopPressure = startComputePressureObserver();
+    refreshThermalTelemetry();
+
+    const intervalMs =
+      state.isGamingModeOn || state.isBoosting || smartSession.isActive || currentScreen === 'dashboard'
+        ? 2000
+        : 5000;
+
+    const iv = setInterval(() => {
+      if (typeof document === 'undefined' || !document.hidden) {
+        refreshThermalTelemetry();
+      }
+    }, intervalMs);
+
+    let nativeListenerHandle: { remove: () => Promise<void> } | null = null;
+    if (isNativeAndroidRuntime()) {
+      GamingEngineNative.addListener('thermalStatusChanged', () => {
+        refreshThermalTelemetry();
+      })
+        .then((handle) => {
+          nativeListenerHandle = handle;
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      stopPressure();
+      clearInterval(iv);
+      if (nativeListenerHandle) {
+        nativeListenerHandle.remove().catch(() => {});
+      }
+    };
+  }, [state.isGamingModeOn, state.isBoosting, smartSession.isActive, currentScreen, refreshThermalTelemetry]);
+
+  const setThermalAlertThreshold = (celsius: number) => {
+    sound.playClick();
+    setState(prev => ({ ...prev, thermalAlertThresholdC: celsius }));
+    setThermalMonitor(prev => ({ ...prev, alertThresholdC: celsius, warningDismissedAt: null }));
+    setSnackBarMessage(`Thermal alert threshold set to ${celsius}°C`);
+  };
+
+  const toggleAutoCoolOnHighTemp = () => {
+    const next = !thermalMonitor.autoCoolEnabled;
+    sound.playToggle(next);
+    setState(prev => ({ ...prev, autoCoolOnHighTemp: next }));
+    setThermalMonitor(prev => ({ ...prev, autoCoolEnabled: next }));
+    setSnackBarMessage(next ? 'Auto-Cool 60 FPS enabled for high temps' : 'Auto-Cool disabled');
+  };
+
+  const dismissThermalWarning = () => {
+    sound.playClick();
+    setThermalMonitor(prev => ({
+      ...prev,
+      isHighTempWarning: false,
+      warningDismissedAt: Date.now(),
+    }));
+  };
+
+  const applyThermalCooldownProfile = async () => {
+    await applyOptimizationProfile('BALANCED_MODE');
+    setThermalMonitor(prev => ({
+      ...prev,
+      isHighTempWarning: false,
+      warningDismissedAt: Date.now(),
+    }));
+    setSnackBarMessage('Cooling Profile Active: 60 FPS Balanced Mode');
+    addLog('User engaged 60 FPS Balanced Cooling Profile from Thermal Monitor.');
+  };
+
   // Apply Optimization Profile (5 modes + native ADPF/GameManager/refresh-rate bridge)
   const applyOptimizationProfile = async (profileId: OptimizationProfileMode, gamePkg?: string) => {
     sound.playBoost();
@@ -1112,6 +1421,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       activeProfile: profileSpec.id,
     });
   };
+  applyProfileRef.current = applyOptimizationProfile;
 
   // Crash Diagnostic Helper (used by App ErrorBoundary & Settings diagnostic test)
   const logCrashDiagnostic = async (message: string, stack?: string, screenName?: string) => {
@@ -1327,26 +1637,57 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     addLog(`Block VPN Firewall engaged: ${blockedPkgs.length} apps restricted to 0 KB/s`);
   };
 
-  const cleanRam = () => {
-    sound.playBoost();
-    const freed = Math.floor(Math.random() * 450) + 380;
-    const newRamGb = Math.max(1.5, Number((state.ramUsedGb - freed / 1024).toFixed(1)));
-    const newPercent = Math.round((newRamGb / state.totalRamGb) * 100);
-
+  const refreshHardwareTelemetry = async () => {
+    await updateRealStats();
+    const s = await getStorageStats();
     setState(prev => ({
       ...prev,
-      ramUsedGb: newRamGb,
-      ramUsagePercent: newPercent,
+      storage: {
+        freeGb: parseFloat(s.freeGb) || prev.storage?.freeGb || 0,
+        totalGb: parseFloat(s.totalGb) || prev.storage?.totalGb || 0,
+        usedPercent: s.usedPercent ?? prev.storage?.usedPercent ?? 0,
+        appTempCacheKb: s.appTempCacheKb ?? 0,
+        isNativeStorage: Boolean(s.isNativeStorage),
+      },
     }));
+    addLog('Hardware telemetry & storage diagnostics refreshed.');
+  };
 
-    addLog(`ActivityManager: Killed 14 background services. Freed ${freed} MB RAM!`);
-    return { freedMb: freed, newPercent };
+  // User-permission-gated temporary cache cleanup (only clears app's own sandbox cache)
+  const clearTemporaryCache = async () => {
+    sound.playBoost();
+    const result = await clearAppTempCache();
+    setState(prev => ({
+      ...prev,
+      storage: {
+        freeGb: parseFloat(result.freeGb) || prev.storage?.freeGb || 0,
+        totalGb: parseFloat(result.totalGb) || prev.storage?.totalGb || 0,
+        usedPercent: result.usedPercent ?? prev.storage?.usedPercent ?? 0,
+        appTempCacheKb: result.remainingCacheKb ?? 0,
+        isNativeStorage: Boolean(result.isNativeStorage),
+      },
+    }));
+    addLog(`Temp Cache Cleaned (User Confirmed): Freed ${result.freedKb} KB app cache.`);
+    setSnackBarMessage(
+      result.freedKb > 0
+        ? `App Temp Cache Cleared (${result.freedKb} KB Freed)`
+        : 'App Temp Cache Already Clean (0 KB)'
+    );
+    return result;
+  };
+
+  // Backwards-compatible non-fabricated refresh stub (zero fake RAM MB or process killing)
+  const cleanRam = () => {
+    sound.playClick();
+    updateRealStats();
+    addLog('RAM & hardware telemetry refreshed from OS MemoryInfo.');
+    return { freedMb: 0, newPercent: state.ramUsagePercent };
   };
 
   const applyGraphicsSettings = (newSettings: Partial<BoosterState>) => {
     sound.playSuccess();
     setState(prev => ({ ...prev, ...newSettings }));
-    addLog('Graphics profile applied: Vulkan render pipeline active');
+    addLog('Graphics profile applied: Hardware frame pacing updated');
   };
 
   const updateSetting = <K extends keyof BoosterState>(key: K, value: BoosterState[K]) => {
@@ -1354,10 +1695,165 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setState(prev => ({ ...prev, [key]: value }));
   };
 
-  // 8-Step Smart Gaming Session Launcher
+  const updatePerGameProfile = (gamePackage: string, patch: Partial<PerGameProfile>) => {
+    sound.playClick();
+    setPerGameProfiles(prev => {
+      const existing: PerGameProfile = prev[gamePackage] || {
+        gamePackage,
+        profileMode: state.activeProfile,
+        targetFps: state.activeFps,
+        resolutionScale: state.resolutionScale,
+        firewallPreset: firewallState.preset,
+        updatedAt: Date.now(),
+      };
+      return {
+        ...prev,
+        [gamePackage]: {
+          ...existing,
+          ...patch,
+          updatedAt: Date.now(),
+        },
+      };
+    });
+    setSnackBarMessage('Per-Game Profile Saved');
+    addLog(`Saved optimization profile for ${gamePackage}`);
+  };
+
+  // Real-time Performance Bottleneck Analyzer & Device-Capable Recommendations
+  const bottleneckReport: BottleneckReport = useMemo(() => {
+    const items: BottleneckItem[] = [];
+    const maxHz = state.maxHardwareHz || 60;
+    const requestedFps = Number(state.activeFps) || 60;
+
+    // 1. Hardware Refresh Rate Constraint
+    if (requestedFps > maxHz) {
+      items.push({
+        id: 'display_cap',
+        area: 'display',
+        severity: 'warning',
+        title: `Target ${requestedFps} FPS Exceeds ${maxHz}Hz Display`,
+        detail: `Hardware panel supports up to ${maxHz}Hz. Android caps actual frame output at display refresh rate.`,
+        recommendation: `Switch target to ${maxHz >= 90 ? '90' : '60'} FPS to reduce wasted GPU heat.`,
+      });
+    }
+
+    // 2. Thermal Throttling Risk
+    if (
+      state.temperatureC >= 41 ||
+      deviceCapabilities.thermalStatus === 'SEVERE' ||
+      deviceCapabilities.thermalStatus === 'CRITICAL'
+    ) {
+      items.push({
+        id: 'thermal_high',
+        area: 'thermal',
+        severity: 'critical',
+        title: `Thermal Pressure (${state.temperatureC.toFixed(1)}°C)`,
+        detail: 'Elevated battery/chassis temperature causes Android thermal throttling and FPS drops.',
+        recommendation: 'Switch to Balanced or 60 FPS, avoid charging while gaming, and lower screen brightness.',
+      });
+    } else if (state.temperatureC >= 38 || deviceCapabilities.thermalStatus === 'MODERATE') {
+      items.push({
+        id: 'thermal_warm',
+        area: 'thermal',
+        severity: 'warning',
+        title: `Warm Device (${state.temperatureC.toFixed(1)}°C)`,
+        detail: 'Approaching thermal throttling threshold during extended matches.',
+        recommendation: 'Monitor temps and prefer Smart Boost profile.',
+      });
+    }
+
+    // 3. RAM Pressure
+    if (state.ramUsagePercent >= 82 || (state.totalRamGb > 0 && state.totalRamGb - state.ramUsedGb < 0.7)) {
+      items.push({
+        id: 'ram_pressure',
+        area: 'ram',
+        severity: 'warning',
+        title: `High RAM Usage (${state.ramUsagePercent}%)`,
+        detail: `Only ${Math.max(0, state.totalRamGb - state.ramUsedGb).toFixed(1)} GB free. Background apps may cause micro-stutters.`,
+        recommendation: 'Close heavy media apps manually before launching your game.',
+      });
+    }
+
+    // 4. Network / Offline / Latency Bottleneck
+    if (state.isOnline === false) {
+      items.push({
+        id: 'network_offline',
+        area: 'network',
+        severity: 'critical',
+        title: 'No Internet Connection',
+        detail: 'Device appears offline. Live matchmaking ping and cloud sync paused.',
+        recommendation: 'Reconnect to stable Wi-Fi or 5G/LTE.',
+      });
+    } else if (activeRegion.currentPingMs > 150 || networkDiagnostics.packetLossPercent > 0) {
+      items.push({
+        id: 'network_latency',
+        area: 'network',
+        severity: activeRegion.currentPingMs > 200 ? 'critical' : 'warning',
+        title: `Network Latency (${activeRegion.currentPingMs}ms, ${networkDiagnostics.packetLossPercent}% loss)`,
+        detail: 'High ping or jitter on current server route causes rubber-banding.',
+        recommendation: 'Select lowest-ping server route and turn ON Local VPN Blocker on Android.',
+      });
+    }
+
+    // 5. Low Battery Saver
+    if (state.batteryLevel <= 20 && !state.isBatteryCharging) {
+      items.push({
+        id: 'battery_low',
+        area: 'battery',
+        severity: 'warning',
+        title: `Low Battery (${state.batteryLevel}%)`,
+        detail: 'Android OS throttles CPU boost clocks below 20% charge.',
+        recommendation: 'Use Battery Saver profile or plug in a cooler charger.',
+      });
+    }
+
+    // Recommended honest FPS based on hardware Hz + thermal + RAM + battery
+    let recommendedFps: FPSMode = '60';
+    let recommendedProfile: OptimizationProfileMode = 'SMART_BOOST';
+    if (state.temperatureC >= 41 || state.batteryLevel <= 20) {
+      recommendedFps = '60';
+      recommendedProfile = 'BATTERY_SAVER';
+    } else if (maxHz >= 120 && state.totalRamGb >= 6 && state.temperatureC < 38) {
+      recommendedFps = '120';
+      recommendedProfile = 'PERFORMANCE_MODE';
+    } else if (maxHz >= 90 && state.totalRamGb >= 4) {
+      recommendedFps = '90';
+      recommendedProfile = 'SMART_BOOST';
+    }
+
+    const hasCritical = items.some(i => i.severity === 'critical');
+    const hasWarning = items.some(i => i.severity === 'warning');
+    const level: BottleneckReport['level'] = hasCritical ? 'critical' : hasWarning ? 'warning' : 'optimal';
+    const summary =
+      items.length === 0
+        ? `Optimal for ${maxHz}Hz • No thermal, RAM, or network bottlenecks detected`
+        : `${items.length} bottleneck${items.length > 1 ? 's' : ''} detected • Recommended: ${recommendedFps} FPS`;
+
+    return {
+      level,
+      summary,
+      bottlenecks: items,
+      recommendedFps,
+      recommendedProfile,
+    };
+  }, [
+    state.maxHardwareHz,
+    state.activeFps,
+    state.temperatureC,
+    state.ramUsagePercent,
+    state.ramUsedGb,
+    state.totalRamGb,
+    state.isOnline,
+    state.batteryLevel,
+    state.isBatteryCharging,
+    activeRegion.currentPingMs,
+    networkDiagnostics.packetLossPercent,
+    deviceCapabilities.thermalStatus,
+  ]);
+
+  // 8-Step Smart Gaming Session Launcher (honors Per-Game Profile!)
   const launchGameWithAutoBoost = async (game: GameItem) => {
     sound.playBoost();
-    // Step 1: Detect selected game
     setActiveGame(game);
     setFirewallState(prev => ({
       ...prev,
@@ -1365,23 +1861,35 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       protectedGameName: game.name,
     }));
 
-    // Step 2: Apply selected optimization profile
-    await applyOptimizationProfile(state.activeProfile, game.packageName);
+    const gameProf = perGameProfiles[game.packageName];
+    const effectiveProfile = gameProf?.profileMode || state.activeProfile;
+    const effectiveFps = gameProf?.targetFps || state.activeFps;
 
-    // Step 3 & 4: Save snapshot, activate firewall, keep selected game unrestricted
-    await saveFirewallSnapshotInternal();
-    if (state.autoBoostOnGameLaunch) {
-      applyVpnFirewall();
-      cleanRam();
+    await applyOptimizationProfile(effectiveProfile, game.packageName);
+    if (gameProf) {
+      setState(prev => ({
+        ...prev,
+        activeFps: effectiveFps,
+        resolutionScale: gameProf.resolutionScale,
+      }));
     }
 
-    // Step 5 & 6: Begin temperature/FPS monitoring & run live network diagnostics
+    await saveFirewallSnapshotInternal();
+    if (state.autoBoostOnGameLaunch) {
+      if (gameProf?.firewallPreset && gameProf.firewallPreset !== 'custom') {
+        await applyFirewallPreset(gameProf.firewallPreset);
+      } else {
+        applyVpnFirewall();
+      }
+      refreshHardwareTelemetry();
+    }
+
     setSmartSession({
       isActive: true,
       startedAt: Date.now(),
       gameName: game.name,
       gamePackage: game.packageName,
-      profileUsed: state.activeProfile,
+      profileUsed: effectiveProfile,
       completedSteps: [1, 2, 3, 4, 5, 6],
       peakTempC: state.temperatureC,
       fpsSamples: [state.currentFps],
@@ -1390,7 +1898,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     setState(prev => ({ ...prev, isGamingModeOn: true, isBoosting: true }));
     setCurrentScreen('dashboard');
-    addLog(`Smart Session Active: ${game.name} (${game.packageName}) • Profile ${state.activeProfile}`);
+    addLog(`Smart Session Active: ${game.name} • Profile ${effectiveProfile} (${effectiveFps} FPS target)`);
   };
 
   // End Session safely -> Upload Cloud Performance Report (Step 7) & Restore Firewall (Step 8)
@@ -1731,6 +2239,9 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         runFullNetworkDiagnostics,
         fpsHistory,
         applyOptimizationProfile,
+        perGameProfiles,
+        updatePerGameProfile,
+        bottleneckReport,
         cloudBackend,
         syncCloudBackend,
         deviceCapabilities,
@@ -1745,12 +2256,20 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         applyFirewallPreset,
         restorePreviousFirewallRules,
         smartSession,
+        thermalMonitor,
+        refreshThermalTelemetry,
+        setThermalAlertThreshold,
+        toggleAutoCoolOnHighTemp,
+        dismissThermalWarning,
+        applyThermalCooldownProfile,
         toggleGamingMode,
         setFpsMode,
         toggleAppBlock,
         toggleAllAppsBlock,
         applyVpnFirewall,
         cleanRam,
+        refreshHardwareTelemetry,
+        clearTemporaryCache,
         applyGraphicsSettings,
         updateSetting,
         launchGameWithAutoBoost,

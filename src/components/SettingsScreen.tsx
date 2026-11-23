@@ -34,9 +34,11 @@ export const SettingsScreen: React.FC = () => {
     performanceReports,
     crashDiagnostics,
     submitManualPerformanceSnapshot,
+    clearTemporaryCache,
   } = useBooster();
 
   const [toast, setToast] = useState<string | null>(null);
+  const [showCacheConfirmModal, setShowCacheConfirmModal] = useState(false);
   const [showAdminPin, setShowAdminPin] = useState(false);
   const [adminPin, setAdminPin] = useState('');
   const [adminPinError, setAdminPinError] = useState(false);
@@ -278,6 +280,35 @@ export const SettingsScreen: React.FC = () => {
             <div className={`w-5 h-5 rounded-full bg-white transition-transform ${state.appLock ? 'translate-x-5' : 'translate-x-0'}`} />
           </button>
         </div>
+
+        {/* Sound & Haptics */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-3 min-w-0 flex-1">
+            <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800/50 flex items-center justify-center text-cyan-400 shrink-0">
+              {state.soundAndHaptics ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4 text-slate-400" />}
+            </div>
+            <div className="min-w-0">
+              <h4 className="text-xs font-bold text-slate-200">
+                {isUr ? 'Sound Effects' : 'UI Sound & Feedback'}
+              </h4>
+              <p className="text-[10px] text-slate-400">
+                {isUr ? 'Button aur boost sounds on/off karein' : 'Toggle button clicks & boost audio'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              const next = !state.soundAndHaptics;
+              updateSetting('soundAndHaptics', next);
+              showToast(next ? 'UI Sound Enabled' : 'UI Sound Muted');
+            }}
+            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 shrink-0 cursor-pointer ${
+              state.soundAndHaptics ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
+            }`}
+          >
+            <div className={`w-5 h-5 rounded-full bg-white transition-transform ${state.soundAndHaptics ? 'translate-x-5' : 'translate-x-0'}`} />
+          </button>
+        </div>
       </div>
 
       {/* Hardware & System Information */}
@@ -308,9 +339,9 @@ export const SettingsScreen: React.FC = () => {
           </div>
 
           <div className="bg-[#050c1f] p-2.5 rounded-xl border border-cyan-950">
-            <span className="text-[10px] text-slate-400 block font-mono">GRAPHICS API</span>
-            <span className="font-orbitron font-bold text-sm text-cyan-300">
-              Vulkan 1.3
+            <span className="text-[10px] text-slate-400 block font-mono">AVAILABLE STORAGE</span>
+            <span className="font-sans font-extrabold text-sm tracking-wide text-emerald-300">
+              {Number(state.storage?.freeGb ?? 28.4).toFixed(1)} / {Number(state.storage?.totalGb ?? 64).toFixed(1)} GB
             </span>
           </div>
 
@@ -322,8 +353,28 @@ export const SettingsScreen: React.FC = () => {
           </div>
         </div>
 
+        <div className="bg-[#050c1f] p-2.5 rounded-xl border border-cyan-950 flex items-center justify-between gap-2">
+          <div>
+            <span className="text-[10px] text-slate-400 font-mono block">APP TEMP CACHE</span>
+            <span className="font-orbitron font-bold text-xs text-white">
+              {state.storage?.appTempCacheKb ?? 0} KB
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              sound.playClick();
+              setShowCacheConfirmModal(true);
+            }}
+            className="px-3 py-1.5 rounded-xl bg-cyan-950 border border-cyan-600/60 hover:border-cyan-400 text-cyan-300 text-[10px] font-mono font-bold flex items-center space-x-1 cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Clear Cache</span>
+          </button>
+        </div>
+
         <p className="text-[10px] text-slate-400 font-mono text-center pt-0.5">
-          {isUr ? 'Performance aapke device ke hardware par munhasir hai' : 'Performance depends on device'}
+          {isUr ? 'Performance aapke device ke hardware par munhasir hai' : 'Performance depends on device hardware & thermals'}
         </p>
       </div>
 
@@ -516,6 +567,41 @@ export const SettingsScreen: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Explicit User Permission Modal for Clearing App Temp Cache */}
+      {showCacheConfirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-xs bg-[#071333] border border-cyan-500/60 rounded-3xl p-5 shadow-2xl space-y-3 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-400 flex items-center justify-center mx-auto text-cyan-300">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="font-orbitron font-bold text-sm text-white">Clear App Temporary Cache?</h3>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              Removes <strong className="text-cyan-300">{state.storage?.appTempCacheKb ?? 0} KB</strong> of temporary cache files inside FPS Booster only.
+            </p>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowCacheConfirmModal(false)}
+                className="py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold font-orbitron cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowCacheConfirmModal(false);
+                  const r = await clearTemporaryCache();
+                  showToast(r.freedKb > 0 ? `Freed ${r.freedKb} KB Temp Cache` : 'Temp Cache Already Clean');
+                }}
+                className="py-2 rounded-xl bg-cyan-400 text-black text-xs font-bold font-orbitron cursor-pointer"
+              >
+                Confirm Clear
+              </button>
+            </div>
           </div>
         </div>
       )}

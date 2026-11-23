@@ -12,6 +12,20 @@ export async function runNetworkSpeedDiagnostics(
   probeUrl: string,
   fallbackPingMs: number
 ): Promise<NetworkDiagnosticsState> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return {
+      pingMs: 0,
+      jitterMs: 0,
+      packetLossPercent: 100,
+      downloadMbps: 0,
+      uploadMbps: 0,
+      stabilityPercent: 0,
+      connectionType: 'OFFLINE',
+      isMeasuringSpeed: false,
+      lastDiagnosticsAt: Date.now(),
+    };
+  }
+
   const samples: number[] = [];
   let failures = 0;
 
@@ -20,7 +34,7 @@ export async function runNetworkSpeedDiagnostics(
     const start = performance.now();
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1800);
+      const timeoutId = setTimeout(() => controller.abort(), 1600);
       await fetch(probeUrl, {
         method: 'HEAD',
         mode: 'no-cors',
@@ -28,7 +42,7 @@ export async function runNetworkSpeedDiagnostics(
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
-      samples.push(Math.max(12, Math.round(performance.now() - start)));
+      samples.push(Math.max(10, Math.round(performance.now() - start)));
     } catch {
       failures++;
     }
@@ -37,9 +51,11 @@ export async function runNetworkSpeedDiagnostics(
   const avgPing =
     samples.length > 0
       ? Math.round(samples.reduce((sum, v) => sum + v, 0) / samples.length)
-      : fallbackPingMs;
+      : fallbackPingMs > 0
+      ? fallbackPingMs
+      : 0;
 
-  let jitterMs = 1.5;
+  let jitterMs = 0;
   if (samples.length >= 2) {
     let diffs = 0;
     for (let i = 1; i < samples.length; i++) {
@@ -50,7 +66,7 @@ export async function runNetworkSpeedDiagnostics(
 
   const packetLossPercent = Number(((failures / 3) * 100).toFixed(1));
 
-  // 2. Real Download Speed measurement via timed asset fetch + Navigator/Native Android fallback
+  // 2. Real Download Speed measurement via timed asset fetch + Navigator/Native Android capabilities
   let downloadMbps = 0;
   let uploadMbps = 0;
   let connectionType = 'WEB';
@@ -75,7 +91,6 @@ export async function runNetworkSpeedDiagnostics(
     }
   }
 
-  // Always measure real local/server fetch timing if downloadMbps wasn't obtained from native link capabilities
   if (downloadMbps <= 0) {
     try {
       const t0 = performance.now();
@@ -84,26 +99,28 @@ export async function runNetworkSpeedDiagnostics(
       const dtSec = Math.max(0.004, (performance.now() - t0) / 1000);
       const bits = buf.byteLength * 8;
       const rawMbps = bits / dtSec / 1_000_000;
-      // Blend with browser NetworkInformation downlink when local cache makes asset loopback > 100Mbps
       if (navConn?.downlink && navConn.downlink > 0) {
         downloadMbps = Number(navConn.downlink.toFixed(1));
       } else {
         downloadMbps = Number(Math.min(500, Math.max(0.5, rawMbps)).toFixed(1));
       }
     } catch {
-      downloadMbps = navConn?.downlink ? Number(navConn.downlink.toFixed(1)) : 18.4;
+      downloadMbps = navConn?.downlink ? Number(navConn.downlink.toFixed(1)) : 0;
     }
   }
 
-  if (uploadMbps <= 0) {
-    uploadMbps = Number(Math.max(0.8, downloadMbps * 0.42).toFixed(1));
+  if (uploadMbps <= 0 && downloadMbps > 0) {
+    uploadMbps = Number(Math.max(0.5, downloadMbps * 0.42).toFixed(1));
   }
 
-  // 3. Connection Stability Score (never claims server lowered ping; computes stability from jitter + loss)
+  // 3. Connection Stability Score computed from measured jitter, loss & latency
   const jitterPenalty = Math.min(30, jitterMs * 1.4);
   const lossPenalty = packetLossPercent * 1.2;
   const pingPenalty = avgPing > 140 ? 12 : avgPing > 90 ? 5 : 0;
-  const stabilityPercent = Math.max(20, Math.min(100, Math.round(100 - jitterPenalty - lossPenalty - pingPenalty)));
+  const stabilityPercent =
+    failures === 3
+      ? 0
+      : Math.max(20, Math.min(100, Math.round(100 - jitterPenalty - lossPenalty - pingPenalty)));
 
   return {
     pingMs: avgPing,

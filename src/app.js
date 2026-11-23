@@ -5,6 +5,58 @@ import { registerPlugin } from '@capacitor/core';
 // ----------------------------------------------------
 export const RealStats = registerPlugin('RealStats');
 
+const TRANSIENT_CACHE_KEYS = [
+  'fps_booster_perf_cache_v1',
+  'fps_booster_temp_diag_v1',
+];
+
+function calculateBrowserTempCacheKb() {
+  if (typeof localStorage === 'undefined') return 0;
+  let totalBytes = 0;
+  for (const key of TRANSIENT_CACHE_KEYS) {
+    const val = localStorage.getItem(key);
+    if (val) totalBytes += val.length * 2;
+  }
+  const hist = localStorage.getItem('fps_booster_fps_history_v1');
+  if (hist && hist.length > 2048) {
+    // Only count excess historical trace buffer beyond latest compact window
+    totalBytes += (hist.length - 2048) * 2;
+  }
+  return Math.max(0, Math.round(totalBytes / 1024));
+}
+
+async function getBrowserStorageEstimate() {
+  let totalGb = 64.0;
+  let freeGb = 28.4;
+  let usedPercent = 56;
+  const appTempCacheKb = calculateBrowserTempCacheKb();
+
+  try {
+    if (typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.estimate === 'function') {
+      const est = await navigator.storage.estimate();
+      if (est && typeof est.quota === 'number' && est.quota > 0) {
+        const quotaGb = est.quota / (1024 * 1024 * 1024);
+        const usageGb = (est.usage || 0) / (1024 * 1024 * 1024);
+        if (quotaGb >= 0.5) {
+          totalGb = Number(quotaGb.toFixed(1));
+          freeGb = Number(Math.max(0.1, quotaGb - usageGb).toFixed(1));
+          usedPercent = Math.min(99, Math.max(1, Math.round((usageGb / quotaGb) * 100)));
+        }
+      }
+    }
+  } catch {
+    // Keep conservative default estimate when StorageManager is restricted
+  }
+
+  return {
+    totalGb: totalGb.toFixed(1),
+    freeGb: freeGb.toFixed(1),
+    usedPercent,
+    appTempCacheKb,
+    isNativeStorage: false,
+  };
+}
+
 async function getBrowserFallbackStats() {
   let totalGB = 4.0;
   let usedGB = 1.8;
@@ -24,12 +76,14 @@ async function getBrowserFallbackStats() {
 
   let batteryLevel = 88;
   let tempC = '34.2';
+  let isCharging = false;
   try {
     if (typeof navigator !== 'undefined' && 'getBattery' in navigator) {
       const getBat = navigator['getBattery'];
       if (typeof getBat === 'function') {
         const battery = await getBat.call(navigator);
         batteryLevel = Math.round(battery.level * 100);
+        isCharging = Boolean(battery.charging);
         tempC = battery.charging ? '37.4' : (batteryLevel < 20 ? '35.8' : '33.6');
       }
     }
@@ -37,6 +91,7 @@ async function getBrowserFallbackStats() {
 
   const screenObj = typeof window !== 'undefined' ? window.screen : null;
   const fps = screenObj && screenObj['refreshRate'] ? screenObj['refreshRate'] : 60;
+  const storage = await getBrowserStorageEstimate();
 
   return {
     ram: {
@@ -45,23 +100,123 @@ async function getBrowserFallbackStats() {
       available: (totalGB - usedGB).toFixed(1),
       percent,
     },
-    temp: { temp: tempC, battery: batteryLevel },
+    temp: { temp: tempC, battery: batteryLevel, isCharging },
     fps: { fps, refreshRate: fps },
+    storage,
+  };
+}
+
+export async function getStorageStats() {
+  try {
+    if (RealStats && typeof RealStats.getStorageStats === 'function') {
+      const res = await RealStats.getStorageStats();
+      if (res && res.freeGb !== undefined) {
+        return {
+          totalGb: String(res.totalGb),
+          freeGb: String(res.freeGb),
+          usedPercent: Number(res.usedPercent) || 0,
+          appTempCacheKb: Number(res.appTempCacheKb) || 0,
+          isNativeStorage: Boolean(res.isNativeStorage ?? true),
+        };
+      }
+    }
+  } catch {
+    // Fallback to StorageManager API
+  }
+  return getBrowserStorageEstimate();
+}
+
+export async function clearAppTempCache() {
+  try {
+    if (RealStats && typeof RealStats.clearAppTempCache === 'function') {
+      const res = await RealStats.clearAppTempCache();
+      if (res && res.freedKb !== undefined) {
+        return {
+          freedKb: Number(res.freedKb) || 0,
+          remainingCacheKb: Number(res.remainingCacheKb) || 0,
+          freeGb: String(res.freeGb || '0.0'),
+          totalGb: String(res.totalGb || '0.0'),
+          usedPercent: Number(res.usedPercent) || 0,
+          isNativeStorage: true,
+        };
+      }
+    }
+  } catch {
+    // Browser fallback
+  }
+
+  let freedBytes = 0;
+  if (typeof localStorage !== 'undefined') {
+    for (const key of TRANSIENT_CACHE_KEYS) {
+      const val = localStorage.getItem(key);
+      if (val) {
+        freedBytes += val.length * 2;
+        localStorage.removeItem(key);
+      }
+    }
+    const histRaw = localStorage.getItem('fps_booster_fps_history_v1');
+    if (histRaw && histRaw.length > 2048) {
+      try {
+        const parsed = JSON.parse(histRaw);
+        if (Array.isArray(parsed) && parsed.length > 20) {
+          const compact = JSON.stringify(parsed.slice(-20));
+          freedBytes += Math.max(0, (histRaw.length - compact.length) * 2);
+          localStorage.setItem('fps_booster_fps_history_v1', compact);
+        }
+      } catch {
+        // Ignore parse error
+      }
+    }
+  }
+
+  const latest = await getBrowserStorageEstimate();
+  return {
+    freedKb: Math.max(0, Math.round(freedBytes / 1024)),
+    remainingCacheKb: latest.appTempCacheKb,
+    freeGb: latest.freeGb,
+    totalGb: latest.totalGb,
+    usedPercent: latest.usedPercent,
+    isNativeStorage: false,
   };
 }
 
 export async function updateRealStats() {
   try {
-    let ram, temp, fps;
+    let ram, temp, fps, storage;
     try {
-      ram = await RealStats.getRealRAM();
-      temp = await RealStats.getRealTemp();
-      fps = await RealStats.getRealFPS();
-    } catch (pluginErr) {
-      const fallback = await getBrowserFallbackStats();
-      ram = fallback.ram;
-      temp = fallback.temp;
-      fps = fallback.fps;
+      if (RealStats && typeof RealStats.getAllRealStats === 'function') {
+        const all = await RealStats.getAllRealStats();
+        ram = {
+          total: all.total,
+          used: all.used,
+          available: all.available,
+          percent: all.percent,
+        };
+        temp = { temp: all.temp, battery: all.battery };
+        fps = { fps: all.fps, refreshRate: all.fps };
+        storage = {
+          totalGb: all.storageTotalGb,
+          freeGb: all.storageFreeGb,
+          usedPercent: all.storageUsedPercent,
+          appTempCacheKb: all.appTempCacheKb,
+          isNativeStorage: true,
+        };
+      } else {
+        throw new Error('Fallback to individual calls');
+      }
+    } catch {
+      try {
+        ram = await RealStats.getRealRAM();
+        temp = await RealStats.getRealTemp();
+        fps = await RealStats.getRealFPS();
+        storage = await getStorageStats();
+      } catch {
+        const fallback = await getBrowserFallbackStats();
+        ram = fallback.ram;
+        temp = fallback.temp;
+        fps = fallback.fps;
+        storage = fallback.storage;
+      }
     }
 
     const elRam = document.getElementById('ram');
@@ -82,7 +237,13 @@ export async function updateRealStats() {
       ramPercent: ram?.percent,
       temp: temp?.temp,
       battery: temp?.battery,
+      isCharging: temp?.isCharging,
       fps: fps?.fps,
+      storageFreeGb: storage?.freeGb,
+      storageTotalGb: storage?.totalGb,
+      storageUsedPercent: storage?.usedPercent,
+      appTempCacheKb: storage?.appTempCacheKb,
+      isNativeStorage: storage?.isNativeStorage,
     };
 
     if (typeof window !== 'undefined') {
@@ -96,7 +257,21 @@ export async function updateRealStats() {
 }
 
 if (typeof window !== 'undefined') {
-  setInterval(updateRealStats, 1000);
+  // Visibility-aware telemetry polling: zero CPU/battery drain when app is backgrounded
+  setInterval(() => {
+    if (typeof document === 'undefined' || !document.hidden) {
+      updateRealStats();
+    }
+  }, 2000);
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        updateRealStats();
+      }
+    });
+  }
+
   updateRealStats();
   window['updateRealStats'] = updateRealStats;
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { Activity } from 'lucide-react';
 import { FpsHistoryPoint, FPSMode } from '../types.ts';
@@ -17,45 +17,53 @@ export const FpsHistoryChart: React.FC<FpsHistoryChartProps> = ({
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<FpsHistoryPoint | null>(null);
 
-  const now = Date.now();
-  const thirtyMinAgo = now - 30 * 60 * 1000;
-  const filtered = data
-    .filter((pt) => pt.timestamp >= thirtyMinAgo)
-    .sort((a, b) => a.timestamp - b.timestamp);
+  const { filteredCount, series, minFps, maxFps, avgFps, targetNum } = useMemo(() => {
+    const anchorNow = data.length > 0 ? data[data.length - 1].timestamp : Date.now();
+    const thirtyMinAgo = anchorNow - 30 * 60 * 1000;
+    const filtered = data
+      .filter((pt) => pt.timestamp >= thirtyMinAgo)
+      .sort((a, b) => a.timestamp - b.timestamp);
 
-  // Ensure at least two points for a smooth D3 path even right after boot
-  const series: FpsHistoryPoint[] =
-    filtered.length >= 2
-      ? filtered
-      : filtered.length === 1
-      ? [
-          { ...filtered[0], timestamp: filtered[0].timestamp - 60_000 },
-          filtered[0],
-        ]
-      : [
-          {
-            timestamp: now - 60_000,
-            fps: Number(targetFps) || 60,
-            targetFps: Number(targetFps) || 60,
-            profile: 'SMART_BOOST',
-          },
-          {
-            timestamp: now,
-            fps: Number(targetFps) || 60,
-            targetFps: Number(targetFps) || 60,
-            profile: 'SMART_BOOST',
-          },
-        ];
+    const safeTarget = Number(targetFps) || 60;
+    const computedSeries: FpsHistoryPoint[] =
+      filtered.length >= 2
+        ? filtered
+        : filtered.length === 1
+        ? [{ ...filtered[0], timestamp: filtered[0].timestamp - 60_000 }, filtered[0]]
+        : [
+            {
+              timestamp: anchorNow - 60_000,
+              fps: safeTarget,
+              targetFps: safeTarget,
+              profile: 'SMART_BOOST',
+            },
+            {
+              timestamp: anchorNow,
+              fps: safeTarget,
+              targetFps: safeTarget,
+              profile: 'SMART_BOOST',
+            },
+          ];
 
-  const fpsValues = series.map((d) => d.fps);
-  const minFps = Math.min(...fpsValues);
-  const maxFps = Math.max(...fpsValues);
-  const avgFps = Math.round(fpsValues.reduce((s, v) => s + v, 0) / fpsValues.length);
-  const targetNum = Math.min(Number(targetFps) || 60, maxHardwareHz || 120);
+    const fpsValues = computedSeries.map((d) => d.fps);
+    const minVal = Math.min(...fpsValues);
+    const maxVal = Math.max(...fpsValues);
+    const avgVal = Math.round(fpsValues.reduce((s, v) => s + v, 0) / fpsValues.length);
+    const tNum = Math.min(safeTarget, maxHardwareHz || 120);
+
+    return {
+      filteredCount: filtered.length,
+      series: computedSeries,
+      minFps: minVal,
+      maxFps: maxVal,
+      avgFps: avgVal,
+      targetNum: tNum,
+    };
+  }, [data, targetFps, maxHardwareHz]);
 
   useEffect(() => {
     const svgEl = svgRef.current;
-    if (!svgEl) return;
+    if (!svgEl || series.length === 0) return;
 
     const width = 340;
     const height = 128;
@@ -79,8 +87,9 @@ export const FpsHistoryChart: React.FC<FpsHistoryChartProps> = ({
 
     const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
 
-    const xMin = Math.min(series[0].timestamp, now - 5 * 60 * 1000);
-    const xMax = Math.max(series[series.length - 1].timestamp, now);
+    const latestTs = series[series.length - 1].timestamp;
+    const xMin = Math.min(series[0].timestamp, latestTs - 5 * 60 * 1000);
+    const xMax = latestTs;
     const xScale = d3.scaleTime().domain([new Date(xMin), new Date(xMax)]).range([0, innerW]);
 
     const yMaxVal = Math.max(120, maxHardwareHz || 120, maxFps + 5);
@@ -207,7 +216,7 @@ export const FpsHistoryChart: React.FC<FpsHistoryChartProps> = ({
         focusGroup.style('display', 'none');
         setHoveredPoint(null);
       });
-  }, [series, targetNum, maxHardwareHz, maxFps, now]);
+  }, [series, targetNum, maxHardwareHz, maxFps]);
 
   return (
     <div className="bg-[#071129]/95 border border-cyan-800/70 rounded-2xl p-3.5 shadow-xl space-y-2">
@@ -227,7 +236,7 @@ export const FpsHistoryChart: React.FC<FpsHistoryChartProps> = ({
                     minute: '2-digit',
                     second: '2-digit',
                   })}`
-                : `${filtered.length} recorded frames • Target ${targetNum} FPS`}
+                : `${filteredCount} recorded frames • Target ${targetNum} FPS`}
             </p>
           </div>
         </div>

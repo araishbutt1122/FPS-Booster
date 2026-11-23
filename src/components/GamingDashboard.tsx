@@ -22,18 +22,28 @@ import {
   Shield,
   ArrowDownCircle,
   ArrowUpCircle,
-  Layers
+  Layers,
+  HardDrive,
+  AlertTriangle,
+  Trash2,
+  Thermometer,
+  Snowflake,
+  X
 } from 'lucide-react';
 import { useBooster } from '../context/BoosterContext.tsx';
 import { sound } from '../utils/audio.ts';
 import { FpsHistoryChart } from './FpsHistoryChart.tsx';
+import { ThermalMonitorPanel } from './ThermalMonitorPanel.tsx';
 import { formatBytesCompact } from '../utils/gamingEngine.ts';
 
 export const GamingDashboard: React.FC = () => {
   const { 
     state, 
     stopGamingMode, 
-    cleanRam, 
+    refreshHardwareTelemetry,
+    clearTemporaryCache,
+    bottleneckReport,
+    applyOptimizationProfile,
     activeGame, 
     logs,
     setSnackBarMessage,
@@ -54,16 +64,25 @@ export const GamingDashboard: React.FC = () => {
     gamesList,
     launchGameWithAutoBoost,
     deviceCapabilities,
+    thermalMonitor,
+    refreshThermalTelemetry,
+    setThermalAlertThreshold,
+    toggleAutoCoolOnHighTemp,
+    dismissThermalWarning,
+    applyThermalCooldownProfile,
   } = useBooster();
 
-  const [sessionSeconds, setSessionSeconds] = useState(747); // 00:12:27 default
-  const [isCleaning, setIsCleaning] = useState(false);
+  const [sessionSeconds, setSessionSeconds] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [cleanedToast, setCleanedToast] = useState<string | null>(null);
+  const [showCacheConfirmModal, setShowCacheConfirmModal] = useState(false);
 
-  // Session timer counter
+  // Visibility-aware session timer counter
   useEffect(() => {
     const timer = setInterval(() => {
-      setSessionSeconds(s => s + 1);
+      if (typeof document === 'undefined' || !document.hidden) {
+        setSessionSeconds(s => s + 1);
+      }
     }, 1000);
     return () => clearInterval(timer);
   }, []);
@@ -75,19 +94,24 @@ export const GamingDashboard: React.FC = () => {
     return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleCleanRam = () => {
-    setIsCleaning(true);
-    sound.playBoost();
-    const { freedMb } = cleanRam();
-    setCleanedToast(`Cleared ${freedMb} MB RAM!`);
+  const handleRefreshTelemetry = async () => {
+    setIsRefreshing(true);
+    sound.playClick();
+    await refreshHardwareTelemetry();
+    setCleanedToast('Hardware Telemetry Refreshed');
+    setTimeout(() => setIsRefreshing(false), 700);
+    setTimeout(() => setCleanedToast(null), 2500);
+  };
 
-    setTimeout(() => {
-      setIsCleaning(false);
-    }, 1000);
-
-    setTimeout(() => {
-      setCleanedToast(null);
-    }, 3000);
+  const handleConfirmClearCache = async () => {
+    setShowCacheConfirmModal(false);
+    const res = await clearTemporaryCache();
+    setCleanedToast(
+      res.freedKb > 0
+        ? `Cleared ${res.freedKb} KB Temp Cache!`
+        : 'App Temp Cache Already Clean'
+    );
+    setTimeout(() => setCleanedToast(null), 3000);
   };
 
   const handleManualPingProbe = async () => {
@@ -133,6 +157,74 @@ export const GamingDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* High-Temperature Gaming Session Warning Banner */}
+      {(thermalMonitor.isHighTempWarning || thermalMonitor.severity === 'critical') && (
+        <div
+          role="alert"
+          className={`p-3.5 rounded-2xl border space-y-2.5 shadow-xl ${
+            thermalMonitor.severity === 'critical'
+              ? 'bg-red-950/60 border-red-500 text-red-100'
+              : 'bg-orange-950/55 border-orange-500/80 text-orange-100'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start space-x-2.5 min-w-0">
+              <div className={`w-8 h-8 rounded-xl border flex items-center justify-center shrink-0 mt-0.5 ${
+                thermalMonitor.severity === 'critical'
+                  ? 'bg-red-500/20 border-red-400 text-red-300'
+                  : 'bg-orange-500/20 border-orange-400 text-orange-300'
+              }`}>
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="font-orbitron font-extrabold text-xs uppercase tracking-wide flex items-center space-x-1.5">
+                  <span>
+                    {thermalMonitor.severity === 'critical'
+                      ? 'Critical Temperature Warning'
+                      : 'High Temperature Warning'}
+                  </span>
+                  <span className="font-mono tabular-nums text-white">
+                    ({thermalMonitor.currentTempC.toFixed(1)}°C)
+                  </span>
+                </h4>
+                <p className="text-[11px] font-mono text-slate-200 mt-1 leading-snug">
+                  {thermalMonitor.warningMessage ||
+                    `Device temperature reached ${thermalMonitor.currentTempC.toFixed(1)}°C during gaming. Reduce FPS target or let device cool.`}
+                </p>
+              </div>
+            </div>
+            {thermalMonitor.severity !== 'critical' && (
+              <button
+                type="button"
+                onClick={dismissThermalWarning}
+                aria-label="Dismiss thermal warning"
+                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={applyThermalCooldownProfile}
+              className="flex-1 min-h-[38px] py-1.5 px-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-orbitron font-bold text-[10px] uppercase tracking-wider flex items-center justify-center space-x-1.5 cursor-pointer"
+            >
+              <Snowflake className="w-3.5 h-3.5 shrink-0" />
+              <span>Cool Down (60 FPS Mode)</span>
+            </button>
+            <button
+              type="button"
+              onClick={refreshThermalTelemetry}
+              className="min-h-[38px] py-1.5 px-3 rounded-xl bg-black/40 border border-white/20 hover:border-white/40 text-white font-mono font-bold text-[10px] cursor-pointer whitespace-nowrap"
+            >
+              Re-Scan
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Game / Boost Profile Status Header */}
       <div className="p-3 rounded-2xl bg-[#071333] border border-cyan-900/60 flex items-center justify-between gap-2">
         <div className="flex items-center space-x-2.5 min-w-0 flex-1">
@@ -171,7 +263,13 @@ export const GamingDashboard: React.FC = () => {
               </span>
               <span className="text-[10px] text-emerald-400 font-mono mt-1 flex items-center space-x-1">
                 <ShieldCheck className="w-3 h-3" />
-                <span>FIREWALL LOCKED</span>
+                <span>
+                  {firewallState.enabled
+                    ? firewallState.isNativeAndroid
+                      ? 'VPN FIREWALL ACTIVE'
+                      : 'FIREWALL RULES READY'
+                    : 'ENGINE STANDBY'}
+                </span>
               </span>
             </div>
           </div>
@@ -183,7 +281,7 @@ export const GamingDashboard: React.FC = () => {
         {/* FPS Card */}
         <div className="bg-[#071129]/90 border border-cyan-900/60 rounded-2xl p-3.5 shadow-xl flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <span className="text-[10px] text-slate-400 font-mono block">FPS MONITOR</span>
+            <span className="text-[10px] text-slate-400 font-mono block">FPS ({state.maxHardwareHz}Hz MAX)</span>
             <div className="mt-0.5">
               <span className="font-orbitron font-extrabold text-xl text-cyan-300 drop-shadow-[0_0_8px_rgba(6,182,212,0.8)]">
                 {state.currentFps} FPS
@@ -191,11 +289,11 @@ export const GamingDashboard: React.FC = () => {
             </div>
             {isHighPing ? (
               <span className="text-[10px] text-red-400 font-mono font-bold block mt-1 leading-tight">
-                High Ping Detected - Boost Recommended
+                High Ping Detected
               </span>
             ) : (
               <span className="text-[10px] text-emerald-400 font-mono block mt-1 leading-tight">
-                Optimizing for {state.activeFps} FPS
+                Target {Math.min(Number(state.activeFps), state.maxHardwareHz || 120)} FPS
               </span>
             )}
           </div>
@@ -204,23 +302,23 @@ export const GamingDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* RAM Card with Quick Clean */}
+        {/* RAM & Refresh Card (Zero Fake Cleaning) */}
         <div 
-          onClick={handleCleanRam}
-          className="bg-[#071129]/90 border border-cyan-900/60 hover:border-emerald-500/60 transition-all rounded-2xl p-3.5 shadow-xl flex items-center justify-between gap-2 cursor-pointer"
-          title="Tap to Clean RAM"
+          onClick={handleRefreshTelemetry}
+          className="bg-[#071129]/90 border border-cyan-900/60 hover:border-cyan-500/60 transition-all rounded-2xl p-3.5 shadow-xl flex items-center justify-between gap-2 cursor-pointer"
+          title="Tap to Refresh Live RAM Usage"
         >
           <div className="min-w-0">
-            <span className="text-[10px] text-slate-400 font-mono block">RAM USAGE (Estimated)</span>
+            <span className="text-[10px] text-slate-400 font-mono block">REAL RAM USAGE</span>
             <div className="flex items-baseline flex-wrap gap-1 mt-0.5">
               <span className="font-orbitron font-extrabold text-xl text-emerald-400">
                 {state.ramUsagePercent}%
               </span>
-              <span className="text-[10px] text-slate-400 font-mono">({state.ramUsedGb} GB)</span>
+              <span className="text-[10px] text-slate-400 font-mono">({state.ramUsedGb}/{state.totalRamGb} GB)</span>
             </div>
             <span className="text-[10px] text-cyan-400 font-mono block mt-1 flex items-center space-x-1">
-              <RotateCcw className={`w-2.5 h-2.5 shrink-0 ${isCleaning ? 'animate-spin' : ''}`} />
-              <span>Tap to Clean</span>
+              <RotateCcw className={`w-2.5 h-2.5 shrink-0 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>Tap to Refresh</span>
             </span>
           </div>
           <div className="w-9 h-9 rounded-xl bg-emerald-950/80 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
@@ -229,35 +327,101 @@ export const GamingDashboard: React.FC = () => {
         </div>
 
         {/* Temperature Card */}
-        <div className="bg-[#071129]/90 border border-cyan-900/60 rounded-2xl p-3.5 shadow-xl flex items-center justify-between gap-2">
+        <div
+          onClick={refreshThermalTelemetry}
+          className={`rounded-2xl p-3.5 shadow-xl flex items-center justify-between gap-2 border cursor-pointer transition-colors ${
+            thermalMonitor.severity === 'critical'
+              ? 'bg-red-950/45 border-red-500/80'
+              : thermalMonitor.severity === 'high'
+              ? 'bg-orange-950/40 border-orange-500/75'
+              : thermalMonitor.severity === 'warm'
+              ? 'bg-amber-950/30 border-amber-500/60'
+              : 'bg-[#071129]/90 border-cyan-900/60 hover:border-cyan-500/60'
+          }`}
+          title="Tap to Refresh Device Thermal Telemetry"
+        >
           <div className="min-w-0">
-            <span className="text-[10px] text-slate-400 font-mono block">DEVICE TEMP (Estimated)</span>
-            <span className="font-orbitron font-extrabold text-xl text-amber-400 block mt-0.5 leading-tight">
-              {state.temperatureC}°C
+            <span className="text-[10px] text-slate-400 font-mono block">DEVICE TEMP</span>
+            <span className={`font-orbitron font-extrabold text-xl block mt-0.5 leading-tight tabular-nums ${
+              thermalMonitor.severity === 'critical'
+                ? 'text-red-400'
+                : thermalMonitor.severity === 'high'
+                ? 'text-orange-400'
+                : thermalMonitor.severity === 'warm'
+                ? 'text-amber-300'
+                : 'text-cyan-300'
+            }`}>
+              {thermalMonitor.currentTempC.toFixed(1)}°C
             </span>
-            <span className="text-[10px] text-emerald-400 font-mono block mt-0.5">
-              Battery: {state.batteryLevel ?? 88}%
+            <span className="text-[10px] text-emerald-400 font-mono block mt-0.5 tabular-nums">
+              Battery: {state.batteryLevel ?? 88}%{state.isBatteryCharging ? ' ⚡' : ''}
             </span>
-            <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
-              Thermal Monitor ON
+            <span className={`text-[10px] font-mono font-bold block mt-0.5 ${
+              thermalMonitor.severity === 'critical'
+                ? 'text-red-300'
+                : thermalMonitor.severity === 'high'
+                ? 'text-orange-300'
+                : thermalMonitor.severity === 'warm'
+                ? 'text-amber-300'
+                : 'text-slate-400'
+            }`}>
+              {thermalMonitor.severity.toUpperCase()} · Peak {thermalMonitor.peakSessionTempC.toFixed(1)}°C
             </span>
           </div>
-          <div className="w-9 h-9 rounded-xl bg-amber-950/80 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
-            <Flame className="w-5 h-5" />
+          <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 ${
+            thermalMonitor.severity === 'critical'
+              ? 'bg-red-950/80 border-red-500/50 text-red-400'
+              : thermalMonitor.severity === 'high'
+              ? 'bg-orange-950/80 border-orange-500/50 text-orange-400'
+              : 'bg-amber-950/80 border-amber-500/40 text-amber-400'
+          }`}>
+            {thermalMonitor.severity === 'critical' || thermalMonitor.severity === 'high' ? (
+              <AlertTriangle className="w-5 h-5" />
+            ) : (
+              <Thermometer className="w-5 h-5" />
+            )}
           </div>
         </div>
 
-        {/* Ping Card (Synced with active lowest-ping region) */}
-        <div className="bg-[#071129]/90 border border-cyan-900/60 rounded-2xl p-3.5 shadow-xl flex items-center justify-between">
+        {/* Storage & App Temp Cache Card */}
+        <div 
+          onClick={() => {
+            sound.playClick();
+            setShowCacheConfirmModal(true);
+          }}
+          className="bg-[#071129]/90 border border-cyan-900/60 hover:border-cyan-500/60 rounded-2xl p-3.5 shadow-xl flex items-center justify-between gap-2 cursor-pointer"
+        >
+          <div className="min-w-0">
+            <span className="text-[10px] text-slate-400 font-mono block">FREE STORAGE</span>
+            <span className="font-orbitron font-extrabold text-xl text-cyan-300 block mt-0.5 leading-tight">
+              {Number(state.storage?.freeGb ?? 28.4).toFixed(1)} GB
+            </span>
+            <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
+              of {Number(state.storage?.totalGb ?? 64).toFixed(1)} GB Total
+            </span>
+            <span className="text-[10px] text-cyan-400 font-mono block mt-0.5 flex items-center space-x-1">
+              <Trash2 className="w-2.5 h-2.5" />
+              <span>Cache: {state.storage?.appTempCacheKb ?? 0} KB</span>
+            </span>
+          </div>
+          <div className="w-9 h-9 rounded-xl bg-cyan-950/80 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0">
+            <HardDrive className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Ping Card (Full width, synced with lowest-ping region) */}
+        <div className="col-span-2 bg-[#071129]/90 border border-cyan-900/60 rounded-2xl p-3.5 shadow-xl flex items-center justify-between">
           <div>
             <span className="text-[10px] text-slate-400 font-mono block">NETWORK LATENCY</span>
             <div className="flex items-baseline space-x-1.5 mt-0.5">
               <span className="font-orbitron font-extrabold text-2xl text-cyan-400">
-                {activeRegion.currentPingMs}ms
+                {state.isOnline === false ? 'Offline' : `${activeRegion.currentPingMs}ms`}
               </span>
-              <span className={`text-[10px] font-mono font-bold ${activePingQuality.textColor}`}>
-                {activePingQuality.label}
-              </span>
+              {state.isOnline !== false && (
+                <span className={`text-[10px] font-mono font-bold ${activePingQuality.textColor}`}>
+                  {activePingQuality.label}
+                </span>
+              )}
             </div>
             <span className="text-[10px] text-cyan-300 font-mono block mt-1">
               Route: {activeRegion.name.split(' ')[0]} (±{networkDiagnostics.jitterMs}ms)
@@ -268,6 +432,66 @@ export const GamingDashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Real Performance Bottleneck Detector Card */}
+      <div className={`p-3.5 rounded-2xl border space-y-2 ${
+        bottleneckReport.level === 'critical'
+          ? 'bg-red-950/35 border-red-500/70'
+          : bottleneckReport.level === 'warning'
+          ? 'bg-amber-950/35 border-amber-500/70'
+          : 'bg-emerald-950/30 border-emerald-600/60'
+      }`}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-2">
+            {bottleneckReport.level === 'optimal' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            ) : (
+              <AlertTriangle className={`w-4 h-4 ${bottleneckReport.level === 'critical' ? 'text-red-400' : 'text-amber-400'}`} />
+            )}
+            <h4 className="font-orbitron font-bold text-xs text-white uppercase">
+              Bottleneck &amp; Device Advisor
+            </h4>
+          </div>
+          <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded bg-black/40 text-cyan-300 border border-cyan-700/50">
+            Rec: {bottleneckReport.recommendedFps} FPS
+          </span>
+        </div>
+
+        {bottleneckReport.bottlenecks.length === 0 ? (
+          <p className="text-[11px] font-mono text-emerald-300">
+            {bottleneckReport.summary}
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {bottleneckReport.bottlenecks.map(b => (
+              <div key={b.id} className="bg-black/35 border border-white/10 rounded-xl p-2 text-[10px] font-mono space-y-0.5">
+                <div className={`font-bold ${b.severity === 'critical' ? 'text-red-300' : 'text-amber-300'}`}>
+                  {b.title}
+                </div>
+                <p className="text-slate-300">{b.detail}</p>
+                <p className="text-cyan-300">→ {b.recommendation}</p>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => applyOptimizationProfile(bottleneckReport.recommendedProfile)}
+              className="w-full py-1.5 rounded-xl bg-amber-400 text-black text-[10px] font-orbitron font-bold cursor-pointer"
+            >
+              Apply Recommended Profile ({bottleneckReport.recommendedFps} FPS)
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Device Temperature Monitor & High-Temp Alert Controls */}
+      <ThermalMonitorPanel
+        thermal={thermalMonitor}
+        isInGamingSession={Boolean(state.isGamingModeOn || state.isBoosting || smartSession.isActive)}
+        onRefresh={refreshThermalTelemetry}
+        onChangeThreshold={setThermalAlertThreshold}
+        onToggleAutoCool={toggleAutoCoolOnHighTemp}
+        onApplyCooldown={applyThermalCooldownProfile}
+      />
 
       {/* D3.js Mini 30-Min FPS Fluctuation History Graph */}
       <FpsHistoryChart
@@ -524,11 +748,27 @@ export const GamingDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Button: Performance Optimized! (Green Glowing) */}
-      <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 text-center shadow-[0_0_20px_rgba(16,185,129,0.5)] flex items-center justify-center space-x-2">
-        <CheckCircle2 className="w-5 h-5 text-white" />
-        <span className="font-orbitron font-black text-sm text-white tracking-wider uppercase">
-          Performance Optimized!
+      {/* Honest Performance Status Banner */}
+      <div className={`p-3.5 rounded-2xl text-center flex items-center justify-center space-x-2 border ${
+        state.isOnline === false
+          ? 'bg-slate-800/80 border-slate-600 text-slate-200'
+          : bottleneckReport.level === 'critical'
+          ? 'bg-red-950/70 border-red-500 text-red-200'
+          : bottleneckReport.level === 'warning'
+          ? 'bg-amber-950/70 border-amber-500 text-amber-200'
+          : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.4)] text-white'
+      }`}>
+        {bottleneckReport.level === 'optimal' && state.isOnline !== false ? (
+          <CheckCircle2 className="w-5 h-5 text-white shrink-0" />
+        ) : (
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+        )}
+        <span className="font-orbitron font-black text-xs sm:text-sm tracking-wider uppercase">
+          {state.isOnline === false
+            ? 'Offline • Local Engine Ready'
+            : bottleneckReport.level === 'optimal'
+            ? 'Frame Pacing Optimal!'
+            : 'Performance Alert — See Advisor'}
         </span>
       </div>
 
@@ -544,7 +784,7 @@ export const GamingDashboard: React.FC = () => {
       {/* Live System Process Logs */}
       <div className="bg-[#050b1a] border border-cyan-950 rounded-2xl p-3 font-mono text-[10px] space-y-1">
         <span className="text-slate-400 font-bold block uppercase tracking-wider mb-1">
-          ActivityManager Live Console
+          Engine Telemetry Log
         </span>
         <div className="max-h-24 overflow-y-auto space-y-1 text-slate-300">
           {logs.slice(0, 6).map((log, i) => (
@@ -555,6 +795,37 @@ export const GamingDashboard: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {/* Explicit User Permission Confirmation Modal for Temp Cache */}
+      {showCacheConfirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-xs bg-[#071333] border border-cyan-500/60 rounded-3xl p-5 shadow-2xl space-y-3 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-400 flex items-center justify-center mx-auto text-cyan-300">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="font-orbitron font-bold text-sm text-white">Clear Temporary App Cache?</h3>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              Removes <strong className="text-cyan-300">{state.storage?.appTempCacheKb ?? 0} KB</strong> of temporary cache files inside FPS Booster only.
+            </p>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowCacheConfirmModal(false)}
+                className="py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold font-orbitron cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmClearCache}
+                className="py-2 rounded-xl bg-cyan-400 text-black text-xs font-bold font-orbitron cursor-pointer"
+              >
+                Confirm Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

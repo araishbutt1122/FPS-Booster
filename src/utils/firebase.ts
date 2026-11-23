@@ -2,6 +2,9 @@ import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   signInAnonymously,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
   User as FirebaseUser
 } from 'firebase/auth';
 import {
@@ -152,7 +155,7 @@ export async function uploadScreenshotToStorage(
   }
 }
 
-// 1. Firebase Anonymous Auth - Auto UID without manual login
+// 1. Firebase Auth helpers
 export async function ensureAnonymousAuth(): Promise<FirebaseUser | null> {
   if (auth.currentUser) {
     return auth.currentUser;
@@ -160,10 +163,26 @@ export async function ensureAnonymousAuth(): Promise<FirebaseUser | null> {
   try {
     const cred = await signInAnonymously(auth);
     return cred.user;
-  } catch (err) {
-    console.warn('Anonymous auth initialization:', err);
+  } catch {
     return null;
   }
+}
+
+export async function signInWithGoogleAccount(): Promise<FirebaseUser | null> {
+  try {
+    const provider = new GoogleAuthProvider();
+    const res = await signInWithPopup(auth, provider);
+    return res.user;
+  } catch (err) {
+    console.warn('Google sign-in cancelled or unavailable:', err);
+    return null;
+  }
+}
+
+export async function signOutFirebaseAccount(): Promise<void> {
+  try {
+    await signOut(auth);
+  } catch {}
 }
 
 // 2. Firestore Sync: Save / Update User Profile cleanly under hardened rules
@@ -178,6 +197,9 @@ export async function syncUserToFirestore(userData: {
   boost?: string;
   time?: string;
 }) {
+  if (!auth.currentUser || auth.currentUser.uid !== userData.userId) {
+    return;
+  }
   const path = `users/${userData.userId}`;
   try {
     const userRef = doc(db, 'users', userData.userId);
@@ -327,6 +349,7 @@ export async function rejectPaymentInFirestore(paymentId: string, userId?: strin
 
 // 6. Remote Cloud Config Sync (/cloudConfig/global)
 export async function fetchRemoteCloudConfig(): Promise<CloudRemoteConfig | null> {
+  if (!auth.currentUser) return null;
   const path = 'cloudConfig/global';
   try {
     const snap = await getDocFromServer(doc(db, 'cloudConfig', 'global'));
@@ -352,6 +375,7 @@ export async function fetchRemoteCloudConfig(): Promise<CloudRemoteConfig | null
 
 // 7. Remote Optimization Profiles Sync (/optimizationProfiles)
 export async function fetchRemoteOptimizationProfiles(): Promise<RemoteOptimizationProfileSpec[]> {
+  if (!auth.currentUser) return [];
   const path = 'optimizationProfiles';
   try {
     const q = query(collection(db, 'optimizationProfiles'));
@@ -395,7 +419,11 @@ export async function syncDeviceCompatibilityToFirestore(
     ? 'COMPETITIVE'
     : 'STANDARD';
 
-  const safeId = userId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 128);
+  if (!auth.currentUser || auth.currentUser.uid !== userId) {
+    return tier;
+  }
+
+  const safeId = auth.currentUser.uid.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 128);
   const path = `deviceProfiles/${safeId}`;
   try {
     const ref = doc(db, 'deviceProfiles', safeId);

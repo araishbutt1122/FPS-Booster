@@ -15,7 +15,7 @@ export const RewardAdScreen: React.FC = () => {
   const { 
     adOptions, 
     startRewardBoost, 
-    cleanRam,
+    refreshHardwareTelemetry,
     state, 
     setCurrentScreen 
   } = useBooster();
@@ -26,7 +26,7 @@ export const RewardAdScreen: React.FC = () => {
 
   const handleStartFreeBoost = () => {
     sound.playBoost();
-    cleanRam();
+    refreshHardwareTelemetry();
     const fps = selectedOption.durationMinutes >= 120 ? '120' : selectedOption.durationMinutes >= 60 ? '90' : '60';
     startRewardBoost(selectedOption.durationMinutes, fps, selectedOption.label);
   };
