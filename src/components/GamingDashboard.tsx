@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import { useBooster } from '../context/BoosterContext.tsx';
 import { sound } from '../utils/audio.ts';
-import { FpsHistoryChart } from './FpsHistoryChart.tsx';
+import { PerformanceHistoryGraph } from './PerformanceHistoryGraph.tsx';
 import { ThermalMonitorPanel } from './ThermalMonitorPanel.tsx';
 import { formatBytesCompact } from '../utils/gamingEngine.ts';
 
@@ -493,12 +493,8 @@ export const GamingDashboard: React.FC = () => {
         onApplyCooldown={applyThermalCooldownProfile}
       />
 
-      {/* D3.js Mini 30-Min FPS Fluctuation History Graph */}
-      <FpsHistoryChart
-        data={fpsHistory}
-        targetFps={state.activeFps}
-        maxHardwareHz={state.maxHardwareHz}
-      />
+      {/* D3.js 30-Min Neon FPS Performance History Graph */}
+      <PerformanceHistoryGraph />
 
       {/* Server Status + Firewall Status Cards */}
       <div className="grid grid-cols-2 gap-2.5">

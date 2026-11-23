@@ -1209,40 +1209,58 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return () => clearInterval(iv);
   }, []);
 
-  // Append live FPS sample into 30-minute D3 history buffer every 5 seconds
+  // Append live FPS sample into 30-minute D3 history buffer (visibility-aware + responsive to FPS/profile changes)
   const latestStateRef = useRef(state);
   latestStateRef.current = state;
-  useEffect(() => {
-    const recordSample = () => {
-      const cur = latestStateRef.current;
-      const point: FpsHistoryPoint = {
-        timestamp: Date.now(),
-        fps: cur.currentFps,
-        targetFps: Number(cur.activeFps) || 60,
-        profile: cur.activeProfile || 'SMART_BOOST',
-      };
-      setFpsHistory(prev => {
-        const cutoff = Date.now() - 30 * 60 * 1000;
-        const next = [...prev.filter(p => p.timestamp >= cutoff), point].slice(-360);
-        try {
-          localStorage.setItem('fps_booster_fps_history_v1', JSON.stringify(next));
-        } catch {}
-        return next;
-      });
-      setSmartSession(prev => {
-        if (!prev.isActive) return prev;
-        return {
-          ...prev,
-          peakTempC: Math.max(prev.peakTempC, cur.temperatureC),
-          fpsSamples: [...prev.fpsSamples.slice(-119), cur.currentFps],
-        };
-      });
+  const recordFpsHistoryPoint = useCallback(() => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    const cur = latestStateRef.current;
+    const now = Date.now();
+    const point: FpsHistoryPoint = {
+      timestamp: now,
+      fps: cur.currentFps,
+      targetFps: Number(cur.activeFps) || 60,
+      profile: cur.activeProfile || 'SMART_BOOST',
     };
-
-    recordSample();
-    const iv = setInterval(recordSample, 5000);
-    return () => clearInterval(iv);
+    setFpsHistory(prev => {
+      const cutoff = now - 30 * 60 * 1000;
+      const last = prev[prev.length - 1];
+      // Avoid duplicate sub-second points unless FPS/target/profile changed
+      if (
+        last &&
+        now - last.timestamp < 900 &&
+        last.fps === point.fps &&
+        last.targetFps === point.targetFps &&
+        last.profile === point.profile
+      ) {
+        return prev;
+      }
+      const next = [...prev.filter(p => p.timestamp >= cutoff), point].slice(-600);
+      try {
+        localStorage.setItem('fps_booster_fps_history_v1', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    setSmartSession(prev => {
+      if (!prev.isActive) return prev;
+      return {
+        ...prev,
+        peakTempC: Math.max(prev.peakTempC, cur.temperatureC),
+        fpsSamples: [...prev.fpsSamples.slice(-119), cur.currentFps],
+      };
+    });
   }, []);
+
+  useEffect(() => {
+    recordFpsHistoryPoint();
+  }, [state.currentFps, state.activeFps, state.activeProfile, state.isBoosting, recordFpsHistoryPoint]);
+
+  useEffect(() => {
+    const sampleMs =
+      currentScreen === 'dashboard' || state.isBoosting || state.isGamingModeOn ? 3000 : 5000;
+    const iv = setInterval(recordFpsHistoryPoint, sampleMs);
+    return () => clearInterval(iv);
+  }, [currentScreen, state.isBoosting, state.isGamingModeOn, recordFpsHistoryPoint]);
 
   // Live System Thermal Monitor Polling & Gaming Session High-Temperature Warning Engine
   const thermalRef = useRef(thermalMonitor);

@@ -677,6 +677,10 @@
     }
   }
 
+  .mx-1\.5 {
+    margin-inline: calc(var(--spacing) * 1.5);
+  }
+
   .mx-auto {
     margin-inline: auto;
   }
@@ -2526,6 +2530,10 @@
 
   .bg-\[\#030611\] {
     background-color: #030611;
+  }
+
+  .bg-\[\#030816\] {
+    background-color: #030816;
   }
 
   .bg-\[\#030919\] {
@@ -4756,6 +4764,11 @@
     box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
 
+  .shadow-\[0_0_10px_rgba\(34\,211\,238\,0\.5\)\] {
+    --tw-shadow: 0 0 10px var(--tw-shadow-color, #22d3ee80);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+
   .shadow-\[0_0_10px_rgba\(236\,72\,153\,0\.4\)\] {
     --tw-shadow: 0 0 10px var(--tw-shadow-color, #ec489966);
     box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
@@ -4768,6 +4781,11 @@
 
   .shadow-\[0_0_12px_rgba\(16\,185\,129\,0\.7\)\] {
     --tw-shadow: 0 0 12px var(--tw-shadow-color, #10b981b3);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+
+  .shadow-\[0_0_12px_rgba\(34\,211\,238\,0\.28\)\] {
+    --tw-shadow: 0 0 12px var(--tw-shadow-color, #22d3ee47);
     box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
 
@@ -4843,6 +4861,11 @@
 
   .shadow-\[0_0_22px_rgba\(236\,72\,153\,0\.65\)\] {
     --tw-shadow: 0 0 22px var(--tw-shadow-color, #ec4899a6);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+
+  .shadow-\[0_0_24px_rgba\(6\,182\,212\,0\.16\)\] {
+    --tw-shadow: 0 0 24px var(--tw-shadow-color, #06b6d429);
     box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
 
@@ -5780,6 +5803,10 @@
 
     .hover\:text-amber-300:hover {
       color: var(--color-amber-300);
+    }
+
+    .hover\:text-cyan-200:hover {
+      color: var(--color-cyan-200);
     }
 
     .hover\:text-cyan-300:hover {

@@ -54154,36 +54154,54 @@ var BoosterProvider = ({ children }) => {
 	}, []);
 	const latestStateRef = (0, import_react.useRef)(state);
 	latestStateRef.current = state;
-	(0, import_react.useEffect)(() => {
-		const recordSample = () => {
-			const cur = latestStateRef.current;
-			const point = {
-				timestamp: Date.now(),
-				fps: cur.currentFps,
-				targetFps: Number(cur.activeFps) || 60,
-				profile: cur.activeProfile || "SMART_BOOST"
-			};
-			setFpsHistory((prev) => {
-				const cutoff = Date.now() - 18e5;
-				const next = [...prev.filter((p) => p.timestamp >= cutoff), point].slice(-360);
-				try {
-					localStorage.setItem("fps_booster_fps_history_v1", JSON.stringify(next));
-				} catch {}
-				return next;
-			});
-			setSmartSession((prev) => {
-				if (!prev.isActive) return prev;
-				return {
-					...prev,
-					peakTempC: Math.max(prev.peakTempC, cur.temperatureC),
-					fpsSamples: [...prev.fpsSamples.slice(-119), cur.currentFps]
-				};
-			});
+	const recordFpsHistoryPoint = (0, import_react.useCallback)(() => {
+		if (typeof document !== "undefined" && document.hidden) return;
+		const cur = latestStateRef.current;
+		const now = Date.now();
+		const point = {
+			timestamp: now,
+			fps: cur.currentFps,
+			targetFps: Number(cur.activeFps) || 60,
+			profile: cur.activeProfile || "SMART_BOOST"
 		};
-		recordSample();
-		const iv = setInterval(recordSample, 5e3);
-		return () => clearInterval(iv);
+		setFpsHistory((prev) => {
+			const cutoff = now - 18e5;
+			const last = prev[prev.length - 1];
+			if (last && now - last.timestamp < 900 && last.fps === point.fps && last.targetFps === point.targetFps && last.profile === point.profile) return prev;
+			const next = [...prev.filter((p) => p.timestamp >= cutoff), point].slice(-600);
+			try {
+				localStorage.setItem("fps_booster_fps_history_v1", JSON.stringify(next));
+			} catch {}
+			return next;
+		});
+		setSmartSession((prev) => {
+			if (!prev.isActive) return prev;
+			return {
+				...prev,
+				peakTempC: Math.max(prev.peakTempC, cur.temperatureC),
+				fpsSamples: [...prev.fpsSamples.slice(-119), cur.currentFps]
+			};
+		});
 	}, []);
+	(0, import_react.useEffect)(() => {
+		recordFpsHistoryPoint();
+	}, [
+		state.currentFps,
+		state.activeFps,
+		state.activeProfile,
+		state.isBoosting,
+		recordFpsHistoryPoint
+	]);
+	(0, import_react.useEffect)(() => {
+		const sampleMs = currentScreen === "dashboard" || state.isBoosting || state.isGamingModeOn ? 3e3 : 5e3;
+		const iv = setInterval(recordFpsHistoryPoint, sampleMs);
+		return () => clearInterval(iv);
+	}, [
+		currentScreen,
+		state.isBoosting,
+		state.isGamingModeOn,
+		recordFpsHistoryPoint
+	]);
 	const thermalRef = (0, import_react.useRef)(thermalMonitor);
 	thermalRef.current = thermalMonitor;
 	const applyProfileRef = (0, import_react.useRef)(async () => {});
@@ -63519,71 +63537,94 @@ Step.prototype = {
 		this._x = x, this._y = y;
 	}
 };
-// src/components/FpsHistoryChart.tsx
-var FpsHistoryChart = ({ data, targetFps, maxHardwareHz }) => {
+// src/components/PerformanceHistoryGraph.tsx
+var PerformanceHistoryGraph = ({ data: propData, targetFps: propTargetFps, maxHardwareHz: propMaxHz }) => {
+	const { fpsHistory, state } = useBooster();
+	const data = propData ?? fpsHistory;
+	const targetFps = propTargetFps ?? state.activeFps;
+	const maxHardwareHz = propMaxHz ?? state.maxHardwareHz;
 	const svgRef = (0, import_react.useRef)(null);
+	const [windowMinutes, setWindowMinutes] = (0, import_react.useState)(30);
 	const [hoveredPoint, setHoveredPoint] = (0, import_react.useState)(null);
-	const { filteredCount, series, minFps, maxFps, avgFps, targetNum } = (0, import_react.useMemo)(() => {
+	const { filteredCount, series, minFps, maxFps, avgFps, stabilityPct, targetNum, liveFps } = (0, import_react.useMemo)(() => {
 		const anchorNow = data.length > 0 ? data[data.length - 1].timestamp : Date.now();
-		const thirtyMinAgo = anchorNow - 18e5;
-		const filtered = data.filter((pt) => pt.timestamp >= thirtyMinAgo).sort((a, b) => a.timestamp - b.timestamp);
+		const cutoff = anchorNow - windowMinutes * 60 * 1e3;
+		const filtered = data.filter((pt) => pt.timestamp >= cutoff).sort((a, b) => a.timestamp - b.timestamp);
 		const safeTarget = Number(targetFps) || 60;
+		const tNum = Math.min(safeTarget, maxHardwareHz || 120);
+		const currentLive = state.currentFps || safeTarget;
 		const computedSeries = filtered.length >= 2 ? filtered : filtered.length === 1 ? [{
 			...filtered[0],
-			timestamp: filtered[0].timestamp - 6e4
+			timestamp: filtered[0].timestamp - 6e4,
+			fps: currentLive
 		}, filtered[0]] : [{
 			timestamp: anchorNow - 6e4,
-			fps: safeTarget,
-			targetFps: safeTarget,
-			profile: "SMART_BOOST"
+			fps: currentLive,
+			targetFps: tNum,
+			profile: state.activeProfile || "SMART_BOOST"
 		}, {
 			timestamp: anchorNow,
-			fps: safeTarget,
-			targetFps: safeTarget,
-			profile: "SMART_BOOST"
+			fps: currentLive,
+			targetFps: tNum,
+			profile: state.activeProfile || "SMART_BOOST"
 		}];
 		const fpsValues = computedSeries.map((d) => d.fps);
 		const minVal = Math.min(...fpsValues);
 		const maxVal = Math.max(...fpsValues);
 		const avgVal = Math.round(fpsValues.reduce((s, v) => s + v, 0) / fpsValues.length);
-		const tNum = Math.min(safeTarget, maxHardwareHz || 120);
+		const stableThreshold = tNum * .85;
+		const stableSamples = fpsValues.filter((v) => v >= stableThreshold).length;
+		const stability = Math.round(stableSamples / fpsValues.length * 100);
 		return {
 			filteredCount: filtered.length,
 			series: computedSeries,
 			minFps: minVal,
 			maxFps: maxVal,
 			avgFps: avgVal,
-			targetNum: tNum
+			stabilityPct: stability,
+			targetNum: tNum,
+			liveFps: currentLive
 		};
 	}, [
 		data,
 		targetFps,
-		maxHardwareHz
+		maxHardwareHz,
+		windowMinutes,
+		state.currentFps,
+		state.activeProfile
 	]);
 	(0, import_react.useEffect)(() => {
 		const svgEl = svgRef.current;
 		if (!svgEl || series.length === 0) return;
 		const width = 340;
-		const height = 128;
+		const height = 142;
 		const margin = {
-			top: 12,
-			right: 12,
-			bottom: 22,
-			left: 28
+			top: 14,
+			right: 14,
+			bottom: 24,
+			left: 30
 		};
 		const innerW = width - margin.left - margin.right;
 		const innerH = height - margin.top - margin.bottom;
 		const svg = select(svgEl);
 		svg.selectAll("*").remove();
-		const areaGradient = svg.append("defs").append("linearGradient").attr("id", "fpsAreaGrad").attr("x1", "0%").attr("y1", "0%").attr("x2", "0%").attr("y2", "100%");
-		areaGradient.append("stop").attr("offset", "0%").attr("stop-color", "#06b6d4").attr("stop-opacity", .45);
-		areaGradient.append("stop").attr("offset", "100%").attr("stop-color", "#06b6d4").attr("stop-opacity", .02);
+		const defs = svg.append("defs");
+		const areaGradient = defs.append("linearGradient").attr("id", "perfNeonAreaGrad").attr("x1", "0%").attr("y1", "0%").attr("x2", "0%").attr("y2", "100%");
+		areaGradient.append("stop").attr("offset", "0%").attr("stop-color", "#00e5ff").attr("stop-opacity", .42);
+		areaGradient.append("stop").attr("offset", "65%").attr("stop-color", "#06b6d4").attr("stop-opacity", .12);
+		areaGradient.append("stop").attr("offset", "100%").attr("stop-color", "#020817").attr("stop-opacity", 0);
+		const glowFilter = defs.append("filter").attr("id", "perfNeonGlow").attr("x", "-15%").attr("y", "-25%").attr("width", "130%").attr("height", "150%");
+		glowFilter.append("feGaussianBlur").attr("stdDeviation", "2.5").attr("result", "coloredBlur");
+		const feMerge = glowFilter.append("feMerge");
+		feMerge.append("feMergeNode").attr("in", "coloredBlur");
+		feMerge.append("feMergeNode").attr("in", "SourceGraphic");
 		const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
 		const latestTs = series[series.length - 1].timestamp;
-		const xMin = Math.min(series[0].timestamp, latestTs - 3e5);
+		const minWindowStart = latestTs - Math.min(windowMinutes, 30) * 60 * 1e3;
+		const xMin = Math.max(minWindowStart, Math.min(series[0].timestamp, latestTs - 12e4));
 		const xMax = latestTs;
 		const xScale = time().domain([new Date(xMin), new Date(xMax)]).range([0, innerW]);
-		const yMaxVal = Math.max(120, maxHardwareHz || 120, maxFps + 5);
+		const yMaxVal = Math.max(120, maxHardwareHz || 120, maxFps + 8);
 		const yScale = linear().domain([0, yMaxVal]).nice().range([innerH, 0]);
 		const yTicks = [
 			30,
@@ -63591,19 +63632,23 @@ var FpsHistoryChart = ({ data, targetFps, maxHardwareHz }) => {
 			90,
 			120
 		].filter((t) => t <= yMaxVal);
-		g.selectAll(".fps-grid").data(yTicks).enter().append("line").attr("class", "fps-grid").attr("x1", 0).attr("x2", innerW).attr("y1", (d) => yScale(d)).attr("y2", (d) => yScale(d)).attr("stroke", "rgba(14, 116, 144, 0.28)").attr("stroke-dasharray", "2,3");
-		g.append("line").attr("x1", 0).attr("x2", innerW).attr("y1", yScale(targetNum)).attr("y2", yScale(targetNum)).attr("stroke", "#34d399").attr("stroke-width", 1).attr("stroke-dasharray", "4,3").attr("opacity", .75);
+		g.selectAll(".perf-grid").data(yTicks).enter().append("line").attr("class", "perf-grid").attr("x1", 0).attr("x2", innerW).attr("y1", (d) => yScale(d)).attr("y2", (d) => yScale(d)).attr("stroke", "rgba(34, 211, 238, 0.14)").attr("stroke-dasharray", "2,3");
+		g.append("line").attr("x1", 0).attr("x2", innerW).attr("y1", yScale(targetNum)).attr("y2", yScale(targetNum)).attr("stroke", "#34d399").attr("stroke-width", 1.1).attr("stroke-dasharray", "4,3").attr("opacity", .85);
+		g.append("text").attr("x", innerW - 2).attr("y", Math.max(10, yScale(targetNum) - 4)).attr("text-anchor", "end").attr("fill", "#34d399").attr("font-size", "8px").attr("font-family", "monospace").text(`TARGET ${targetNum}`);
 		const areaGen = area().x((d) => xScale(new Date(d.timestamp))).y0(innerH).y1((d) => yScale(d.fps)).curve(monotoneX);
-		g.append("path").datum(series).attr("fill", "url(#fpsAreaGrad)").attr("d", areaGen);
+		g.append("path").datum(series).attr("fill", "url(#perfNeonAreaGrad)").attr("d", areaGen);
 		const lineGen = line().x((d) => xScale(new Date(d.timestamp))).y((d) => yScale(d.fps)).curve(monotoneX);
-		g.append("path").datum(series).attr("fill", "none").attr("stroke", "#22d3ee").attr("stroke-width", 2.2).attr("stroke-linecap", "round").attr("d", lineGen);
+		g.append("path").datum(series).attr("fill", "none").attr("stroke", "#00e5ff").attr("stroke-width", 2.4).attr("stroke-linecap", "round").attr("filter", "url(#perfNeonGlow)").attr("d", lineGen);
+		const lastPt = series[series.length - 1];
+		g.append("circle").attr("cx", xScale(new Date(lastPt.timestamp))).attr("cy", yScale(lastPt.fps)).attr("r", 4.5).attr("fill", "#00e5ff").attr("fill-opacity", .25);
+		g.append("circle").attr("cx", xScale(new Date(lastPt.timestamp))).attr("cy", yScale(lastPt.fps)).attr("r", 2.6).attr("fill", "#67e8f9").attr("stroke", "#040a1a").attr("stroke-width", 1.2);
 		const xAxis = axisBottom(xScale).ticks(4).tickSize(0).tickFormat((d) => timeFormat("%H:%M")(d));
-		g.append("g").attr("transform", `translate(0,${innerH + 4})`).call(xAxis).call((axis) => axis.select(".domain").remove()).selectAll("text").attr("fill", "#64748b").attr("font-size", "8.5px").attr("font-family", "monospace");
+		g.append("g").attr("transform", `translate(0,${innerH + 5})`).call(xAxis).call((axis) => axis.select(".domain").remove()).selectAll("text").attr("fill", "#94a3b8").attr("font-size", "8.5px").attr("font-family", "monospace");
 		const yAxis = axisLeft(yScale).tickValues(yTicks).tickSize(0);
-		g.append("g").call(yAxis).call((axis) => axis.select(".domain").remove()).selectAll("text").attr("fill", "#64748b").attr("font-size", "8.5px").attr("font-family", "monospace");
+		g.append("g").call(yAxis).call((axis) => axis.select(".domain").remove()).selectAll("text").attr("fill", "#94a3b8").attr("font-size", "8.5px").attr("font-family", "monospace");
 		const focusGroup = g.append("g").style("display", "none");
-		focusGroup.append("line").attr("class", "focus-line").attr("y1", 0).attr("y2", innerH).attr("stroke", "#22d3ee").attr("stroke-width", 1).attr("stroke-dasharray", "2,2").attr("opacity", .7);
-		focusGroup.append("circle").attr("r", 4).attr("fill", "#22d3ee").attr("stroke", "#050A1A").attr("stroke-width", 1.5);
+		focusGroup.append("line").attr("class", "focus-line").attr("y1", 0).attr("y2", innerH).attr("stroke", "#00e5ff").attr("stroke-width", 1).attr("stroke-dasharray", "2,2").attr("opacity", .75);
+		focusGroup.append("circle").attr("r", 4.2).attr("fill", "#00e5ff").attr("stroke", "#050A1A").attr("stroke-width", 1.5);
 		const bisectTime = bisector((d) => d.timestamp).left;
 		g.append("rect").attr("width", innerW).attr("height", innerH).attr("fill", "transparent").style("cursor", "crosshair").on("mousemove touchmove", function(event) {
 			const [mx] = pointer(event, this);
@@ -63628,52 +63673,105 @@ var FpsHistoryChart = ({ data, targetFps, maxHardwareHz }) => {
 		series,
 		targetNum,
 		maxHardwareHz,
-		maxFps
+		maxFps,
+		windowMinutes
 	]);
-	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: "bg-[#071129]/95 border border-cyan-800/70 rounded-2xl p-3.5 shadow-xl space-y-2",
-		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-			className: "flex items-center justify-between gap-2",
-			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "flex items-center space-x-2",
-				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-					className: "w-7 h-7 rounded-lg bg-cyan-500/15 border border-cyan-400/50 flex items-center justify-center text-cyan-400",
-					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Activity, { className: "w-4 h-4" })
-				}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", {
-					className: "font-orbitron font-bold text-xs text-white uppercase tracking-wide",
-					children: "FPS Performance History (30m)"
-				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-					className: "text-[10px] text-slate-400 font-mono",
-					children: hoveredPoint ? `${hoveredPoint.fps} FPS at ${new Date(hoveredPoint.timestamp).toLocaleTimeString([], {
-						hour: "2-digit",
-						minute: "2-digit",
-						second: "2-digit"
-					})}` : `${filteredCount} recorded frames • Target ${targetNum} FPS`
-				})] })]
-			}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "flex items-center space-x-1.5 text-[10px] font-mono shrink-0",
-				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-					className: "px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-700/50 text-emerald-300 font-bold",
-					children: ["AVG ", avgFps]
-				}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-					className: "px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-700/50 text-cyan-300 font-bold",
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+		"aria-label": "FPS Performance History Graph",
+		className: "bg-[#071129]/95 border border-cyan-500/50 rounded-2xl p-3.5 shadow-[0_0_24px_rgba(6,182,212,0.16)] space-y-2.5",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "flex items-start justify-between gap-2",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex items-center space-x-2 min-w-0",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "w-8 h-8 rounded-xl bg-cyan-500/15 border border-cyan-400/60 flex items-center justify-center text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.28)] shrink-0",
+						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Activity, { className: "w-4 h-4" })
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "min-w-0",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h4", {
+							className: "font-orbitron font-bold text-xs text-white uppercase tracking-wide truncate",
+							children: [
+								"Performance History (",
+								windowMinutes,
+								"m)"
+							]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "text-[10px] text-slate-300 font-mono truncate tabular-nums",
+							children: hoveredPoint ? `${hoveredPoint.fps} FPS (${hoveredPoint.profile.replace("_", " ")}) · ${new Date(hoveredPoint.timestamp).toLocaleTimeString([], {
+								hour: "2-digit",
+								minute: "2-digit",
+								second: "2-digit"
+							})}` : `${filteredCount} samples · Live ${liveFps} FPS · ${state.activeProfile.replace("_", " ")}`
+						})]
+					})]
+				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+					className: "flex items-center bg-[#040a1a] border border-cyan-900/70 rounded-lg p-0.5 shrink-0",
 					children: [
-						minFps,
-						"-",
-						maxFps
-					]
+						30,
+						15,
+						5
+					].map((mins) => {
+						return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							onClick: () => setWindowMinutes(mins),
+							className: `px-2 py-1 rounded-md text-[10px] font-mono font-bold transition-colors cursor-pointer whitespace-nowrap ${windowMinutes === mins ? "bg-cyan-400 text-black shadow-[0_0_10px_rgba(34,211,238,0.5)]" : "text-slate-400 hover:text-cyan-200"}`,
+							children: [mins, "m"]
+						}, mins);
+					})
 				})]
-			})]
-		}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-			className: "w-full bg-[#040a1a] border border-cyan-950/90 rounded-xl p-1.5 overflow-hidden",
-			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", {
-				ref: svgRef,
-				viewBox: "0 0 340 128",
-				className: "w-full h-32 block touch-pan-y",
-				role: "img",
-				"aria-label": "30-minute FPS performance fluctuation history graph"
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+				className: "w-full bg-[#030816] border border-cyan-500/30 rounded-xl p-1.5 overflow-hidden",
+				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", {
+					ref: svgRef,
+					viewBox: "0 0 340 142",
+					className: "w-full h-36 block touch-pan-y",
+					role: "img",
+					"aria-label": "Neon line chart of FPS fluctuations over the last 30 minutes"
+				})
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-slate-300 px-0.5 tabular-nums",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+					"Avg: ",
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", {
+						className: "text-cyan-300",
+						children: [avgFps, " FPS"]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+						"aria-hidden": "true",
+						className: "mx-1.5 text-slate-600",
+						children: "·"
+					}),
+					"Range: ",
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", {
+						className: "text-white",
+						children: [
+							minFps,
+							"-",
+							maxFps
+						]
+					})
+				] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+					"Stability: ",
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", {
+						className: stabilityPct >= 85 ? "text-emerald-300" : "text-amber-300",
+						children: [stabilityPct, "%"]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+						"aria-hidden": "true",
+						className: "mx-1.5 text-slate-600",
+						children: "·"
+					}),
+					"Max: ",
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", {
+						className: "text-cyan-300",
+						children: [maxHardwareHz, "Hz"]
+					})
+				] })]
 			})
-		})]
+		]
 	});
 };
 // src/components/ThermalMonitorPanel.tsx
@@ -64438,11 +64536,7 @@ var GamingDashboard = () => {
 				onToggleAutoCool: toggleAutoCoolOnHighTemp,
 				onApplyCooldown: applyThermalCooldownProfile
 			}),
-			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FpsHistoryChart, {
-				data: fpsHistory,
-				targetFps: state.activeFps,
-				maxHardwareHz: state.maxHardwareHz
-			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(PerformanceHistoryGraph, {}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "grid grid-cols-2 gap-2.5",
 				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
