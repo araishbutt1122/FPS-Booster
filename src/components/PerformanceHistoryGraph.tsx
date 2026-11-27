@@ -3,6 +3,7 @@ import * as d3 from 'd3';
 import { Activity } from 'lucide-react';
 import { useBooster } from '../context/BoosterContext.tsx';
 import { FpsHistoryPoint, FPSMode } from '../types.ts';
+import { resolveNumericFps } from '../utils/gamingEngine.ts';
 
 interface PerformanceHistoryGraphProps {
   data?: FpsHistoryPoint[];
@@ -17,10 +18,13 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
   targetFps: propTargetFps,
   maxHardwareHz: propMaxHz,
 }) => {
-  const { fpsHistory, state } = useBooster();
+  const { fpsHistory, state, smartSession, superBoost } = useBooster();
   const data = propData ?? fpsHistory;
   const targetFps = propTargetFps ?? state.activeFps;
   const maxHardwareHz = propMaxHz ?? state.maxHardwareHz;
+  const isGamingSessionActive = Boolean(
+    state.isGamingModeOn || state.isBoosting || smartSession.isActive || superBoost.status === 'active'
+  );
 
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [windowMinutes, setWindowMinutes] = useState<TimeWindowMinutes>(30);
@@ -35,6 +39,7 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
     stabilityPct,
     targetNum,
     liveFps,
+    sessionSpans,
   } = useMemo(() => {
     const anchorNow = data.length > 0 ? data[data.length - 1].timestamp : Date.now();
     const cutoff = anchorNow - windowMinutes * 60 * 1000;
@@ -42,7 +47,7 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
       .filter((pt) => pt.timestamp >= cutoff)
       .sort((a, b) => a.timestamp - b.timestamp);
 
-    const safeTarget = Number(targetFps) || 60;
+    const safeTarget = resolveNumericFps(targetFps, maxHardwareHz);
     const tNum = Math.min(safeTarget, maxHardwareHz || 120);
     const currentLive = state.currentFps || safeTarget;
 
@@ -55,6 +60,7 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
               ...filtered[0],
               timestamp: filtered[0].timestamp - 60_000,
               fps: currentLive,
+              sessionActive: filtered[0].sessionActive ?? isGamingSessionActive,
             },
             filtered[0],
           ]
@@ -64,14 +70,33 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
               fps: currentLive,
               targetFps: tNum,
               profile: state.activeProfile || 'SMART_BOOST',
+              sessionActive: isGamingSessionActive,
             },
             {
               timestamp: anchorNow,
               fps: currentLive,
               targetFps: tNum,
               profile: state.activeProfile || 'SMART_BOOST',
+              sessionActive: isGamingSessionActive,
             },
           ];
+
+    // Identify continuous timestamps where Gaming Session / Super Boost was active
+    const spans: Array<{ start: number; end: number }> = [];
+    let spanStart: number | null = null;
+    for (let i = 0; i < computedSeries.length; i++) {
+      const pt = computedSeries[i];
+      const active = Boolean(pt.sessionActive);
+      if (active && spanStart === null) {
+        spanStart = pt.timestamp;
+      } else if (!active && spanStart !== null) {
+        spans.push({ start: spanStart, end: computedSeries[i - 1].timestamp });
+        spanStart = null;
+      }
+    }
+    if (spanStart !== null) {
+      spans.push({ start: spanStart, end: computedSeries[computedSeries.length - 1].timestamp });
+    }
 
     const fpsValues = computedSeries.map((d) => d.fps);
     const minVal = Math.min(...fpsValues);
@@ -90,8 +115,17 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
       stabilityPct: stability,
       targetNum: tNum,
       liveFps: currentLive,
+      sessionSpans: spans,
     };
-  }, [data, targetFps, maxHardwareHz, windowMinutes, state.currentFps, state.activeProfile]);
+  }, [
+    data,
+    targetFps,
+    maxHardwareHz,
+    windowMinutes,
+    state.currentFps,
+    state.activeProfile,
+    isGamingSessionActive,
+  ]);
 
   useEffect(() => {
     const svgEl = svgRef.current;
@@ -108,7 +142,10 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
 
     const defs = svg.append('defs');
 
-    // Neon cyan area gradient under the curve
+    // Dynamic neon stroke/area colors react to active Gaming Session vs Standby
+    const primaryStroke = isGamingSessionActive ? '#22d3ee' : '#38bdf8';
+    const areaTopColor = isGamingSessionActive ? '#10b981' : '#00e5ff';
+
     const areaGradient = defs
       .append('linearGradient')
       .attr('id', 'perfNeonAreaGrad')
@@ -116,11 +153,10 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
       .attr('y1', '0%')
       .attr('x2', '0%')
       .attr('y2', '100%');
-    areaGradient.append('stop').attr('offset', '0%').attr('stop-color', '#00e5ff').attr('stop-opacity', 0.42);
+    areaGradient.append('stop').attr('offset', '0%').attr('stop-color', areaTopColor).attr('stop-opacity', isGamingSessionActive ? 0.45 : 0.34);
     areaGradient.append('stop').attr('offset', '65%').attr('stop-color', '#06b6d4').attr('stop-opacity', 0.12);
     areaGradient.append('stop').attr('offset', '100%').attr('stop-color', '#020817').attr('stop-opacity', 0);
 
-    // Neon glow filter for the FPS trajectory stroke
     const glowFilter = defs
       .append('filter')
       .attr('id', 'perfNeonGlow')
@@ -130,7 +166,7 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
       .attr('height', '150%');
     glowFilter
       .append('feGaussianBlur')
-      .attr('stdDeviation', '2.5')
+      .attr('stdDeviation', isGamingSessionActive ? '3' : '2.2')
       .attr('result', 'coloredBlur');
     const feMerge = glowFilter.append('feMerge');
     feMerge.append('feMergeNode').attr('in', 'coloredBlur');
@@ -146,6 +182,19 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
 
     const yMaxVal = Math.max(120, maxHardwareHz || 120, maxFps + 8);
     const yScale = d3.scaleLinear().domain([0, yMaxVal]).nice().range([innerH, 0]);
+
+    // Highlight active gaming session intervals on timeline
+    sessionSpans.forEach((span) => {
+      const x1 = Math.max(0, xScale(new Date(span.start)));
+      const x2 = Math.min(innerW, xScale(new Date(span.end)));
+      const rectW = Math.max(2, x2 - x1);
+      g.append('rect')
+        .attr('x', x1)
+        .attr('y', 0)
+        .attr('width', rectW)
+        .attr('height', innerH)
+        .attr('fill', 'rgba(16, 185, 129, 0.08)');
+    });
 
     // Horizontal reference gridlines
     const yTicks = [30, 60, 90, 120].filter((t) => t <= yMaxVal);
@@ -194,7 +243,7 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
       .attr('fill', 'url(#perfNeonAreaGrad)')
       .attr('d', areaGen);
 
-    // Primary neon cyan FPS line with glow filter
+    // Primary neon FPS trajectory stroke
     const lineGen = d3
       .line<FpsHistoryPoint>()
       .x((d) => xScale(new Date(d.timestamp)))
@@ -204,26 +253,26 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
     g.append('path')
       .datum(series)
       .attr('fill', 'none')
-      .attr('stroke', '#00e5ff')
-      .attr('stroke-width', 2.4)
+      .attr('stroke', primaryStroke)
+      .attr('stroke-width', isGamingSessionActive ? 2.6 : 2.1)
       .attr('stroke-linecap', 'round')
       .attr('filter', 'url(#perfNeonGlow)')
       .attr('d', lineGen);
 
-    // Live endpoint glowing node
+    // Live endpoint glowing node (emerald pulse when gaming active, cyan when standby)
     const lastPt = series[series.length - 1];
     g.append('circle')
       .attr('cx', xScale(new Date(lastPt.timestamp)))
       .attr('cy', yScale(lastPt.fps))
-      .attr('r', 4.5)
-      .attr('fill', '#00e5ff')
-      .attr('fill-opacity', 0.25);
+      .attr('r', isGamingSessionActive ? 6 : 4.2)
+      .attr('fill', isGamingSessionActive ? '#34d399' : '#00e5ff')
+      .attr('fill-opacity', 0.28);
 
     g.append('circle')
       .attr('cx', xScale(new Date(lastPt.timestamp)))
       .attr('cy', yScale(lastPt.fps))
-      .attr('r', 2.6)
-      .attr('fill', '#67e8f9')
+      .attr('r', 2.8)
+      .attr('fill', isGamingSessionActive ? '#6ee7b7' : '#67e8f9')
       .attr('stroke', '#040a1a')
       .attr('stroke-width', 1.2);
 
@@ -253,7 +302,7 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
       .attr('font-size', '8.5px')
       .attr('font-family', 'monospace');
 
-    // Interactive hover/touch focus crosshair
+    // Interactive hover/touch focus crosshair (safe clientX/rect math avoiding TouchEvent SVGPoint bug)
     const focusGroup = g.append('g').style('display', 'none');
     focusGroup
       .append('line')
@@ -321,35 +370,55 @@ export const PerformanceHistoryGraph: React.FC<PerformanceHistoryGraphProps> = (
         focusGroup.style('display', 'none');
         setHoveredPoint(null);
       });
-  }, [series, targetNum, maxHardwareHz, maxFps, windowMinutes]);
+
+    return () => {
+      svg.selectAll('*').remove();
+    };
+  }, [series, sessionSpans, targetNum, maxHardwareHz, maxFps, windowMinutes, isGamingSessionActive]);
 
   const activeWindowOptions: TimeWindowMinutes[] = [30, 15, 5];
 
   return (
     <section
       aria-label="FPS Performance History Graph"
-      className="bg-[#071129]/95 border border-cyan-500/50 rounded-2xl p-3.5 shadow-[0_0_24px_rgba(6,182,212,0.16)] space-y-2.5"
+      className={`bg-[#071129]/95 border rounded-2xl p-3.5 shadow-[0_0_24px_rgba(6,182,212,0.16)] space-y-2.5 transition-colors ${
+        isGamingSessionActive ? 'border-emerald-400/55' : 'border-cyan-500/50'
+      }`}
     >
       {/* Header Row */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center space-x-2 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-cyan-500/15 border border-cyan-400/60 flex items-center justify-center text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.28)] shrink-0">
+          <div className={`w-8 h-8 rounded-xl border flex items-center justify-center shrink-0 ${
+            isGamingSessionActive
+              ? 'bg-emerald-500/15 border-emerald-400/60 text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
+              : 'bg-cyan-500/15 border-cyan-400/60 text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.28)]'
+          }`}>
             <Activity className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <h4 className="font-orbitron font-bold text-xs text-white uppercase tracking-wide truncate">
-              Performance History ({windowMinutes}m)
-            </h4>
+            <div className="flex items-center space-x-1.5">
+              <h4 className="font-orbitron font-bold text-xs text-white uppercase tracking-wide truncate">
+                Performance History ({windowMinutes}m)
+              </h4>
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  isGamingSessionActive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+                }`}
+                title={isGamingSessionActive ? 'Gaming Session Active' : 'Ready'}
+              />
+            </div>
             <p className="text-[10px] text-slate-300 font-mono truncate tabular-nums">
               {hoveredPoint
-                ? `${hoveredPoint.fps} FPS (${hoveredPoint.profile.replace('_', ' ')}) · ${new Date(
+                ? `${hoveredPoint.fps} FPS (${hoveredPoint.sessionActive ? 'ACTIVE' : 'IDLE'}) · ${new Date(
                     hoveredPoint.timestamp
                   ).toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
                     second: '2-digit',
                   })}`
-                : `${filteredCount} samples · Live ${liveFps} FPS · ${state.activeProfile.replace('_', ' ')}`}
+                : `${
+                    isGamingSessionActive ? 'SESSION LIVE' : 'READY'
+                  } · ${liveFps} FPS · ${filteredCount} pts`}
             </p>
           </div>
         </div>

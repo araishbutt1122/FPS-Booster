@@ -5,16 +5,25 @@ import android.app.GameManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.TrafficStats;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.PerformanceHintManager;
 import android.os.PowerManager;
 import android.os.Process;
+import android.util.Base64;
 import android.view.Display;
 import android.view.Window;
 import android.view.WindowManager;
@@ -29,9 +38,19 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileReader;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Genuine Android Performance & Network Engine Plugin:
@@ -46,6 +65,7 @@ import java.util.Locale;
 public class GamingEnginePlugin extends Plugin {
     private Object adpfSessionObj = null;
     private Object thermalListenerObj = null;
+    private final ExecutorService netProbeExecutor = Executors.newSingleThreadExecutor();
 
     @Override
     public void load() {
@@ -326,6 +346,43 @@ public class GamingEnginePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void setScreenBrightness(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        float requestedLevel = call.getFloat("level", 0.30f);
+        float clampedLevel = Math.max(0.10f, Math.min(1.0f, requestedLevel));
+        final float targetBrightness = enabled
+            ? clampedLevel
+            : WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+
+        Activity act = getActivity();
+        if (act == null) {
+            JSObject ret = new JSObject();
+            ret.put("applied", false);
+            ret.put("enabled", enabled);
+            call.resolve(ret);
+            return;
+        }
+
+        act.runOnUiThread(() -> {
+            boolean applied = false;
+            try {
+                Window w = act.getWindow();
+                if (w != null) {
+                    WindowManager.LayoutParams lp = w.getAttributes();
+                    lp.screenBrightness = targetBrightness;
+                    w.setAttributes(lp);
+                    applied = true;
+                }
+            } catch (Exception ignored) {}
+            JSObject ret = new JSObject();
+            ret.put("applied", applied);
+            ret.put("enabled", enabled);
+            ret.put("brightness", targetBrightness);
+            call.resolve(ret);
+        });
+    }
+
+    @PluginMethod
     public void getNetworkStats(PluginCall call) {
         Context ctx = getContext();
         long rxBytes = TrafficStats.getTotalRxBytes();
@@ -335,6 +392,12 @@ public class GamingEnginePlugin extends Plugin {
         int upKbps = 0;
         String transport = "UNKNOWN";
         boolean connected = false;
+        boolean validated = false;
+        boolean metered = false;
+        boolean vpnActiveOnDevice = false;
+        int wifiRssi = 0;
+        int wifiLinkMbps = 0;
+        int wifiFreqMhz = 0;
 
         if (ctx != null) {
             ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -344,28 +407,495 @@ public class GamingEnginePlugin extends Plugin {
                     NetworkCapabilities caps = cm.getNetworkCapabilities(active);
                     if (caps != null) {
                         connected = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+                        validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+                        metered = !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+                        vpnActiveOnDevice = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                            || !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN);
                         downKbps = caps.getLinkDownstreamBandwidthKbps();
                         upKbps = caps.getLinkUpstreamBandwidthKbps();
-                        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                            transport = "ETHERNET";
+                        } else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
                             transport = "WIFI";
                         } else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
                             transport = "CELLULAR";
-                        } else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
-                            transport = "ETHERNET";
+                        } else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                            transport = "VPN";
                         }
                     }
                 }
+            }
+
+            if ("WIFI".equals(transport)) {
+                try {
+                    WifiManager wm = (WifiManager) ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                    if (wm != null) {
+                        WifiInfo info = wm.getConnectionInfo();
+                        if (info != null) {
+                            wifiRssi = info.getRssi();
+                            wifiLinkMbps = info.getLinkSpeed();
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                                wifiFreqMhz = info.getFrequency();
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
             }
         }
 
         JSObject ret = new JSObject();
         ret.put("connected", connected);
+        ret.put("validated", validated);
+        ret.put("metered", metered);
+        ret.put("vpnActiveOnDevice", vpnActiveOnDevice || FpsVpnService.isExternalVpnConflict(ctx));
         ret.put("transport", transport);
         ret.put("downstreamKbps", downKbps);
         ret.put("upstreamKbps", upKbps);
         ret.put("totalRxBytes", rxBytes);
         ret.put("totalTxBytes", txBytes);
+        ret.put("wifiRssi", wifiRssi);
+        ret.put("wifiLinkMbps", wifiLinkMbps);
+        ret.put("wifiFreqMhz", wifiFreqMhz);
         call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void probeRealNetworkLatency(PluginCall call) {
+        final Context ctx = getContext();
+        final JSArray hostsParam = call.getArray("hosts");
+        final List<String> targets = new ArrayList<>();
+        if (hostsParam != null) {
+            for (int i = 0; i < hostsParam.length(); i++) {
+                try {
+                    String h = hostsParam.getString(i);
+                    if (h != null && !h.trim().isEmpty()) {
+                        targets.add(h.trim());
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+        if (targets.isEmpty()) {
+            targets.add("1.1.1.1");
+            targets.add("8.8.8.8");
+            targets.add("9.9.9.9");
+        }
+
+        netProbeExecutor.execute(() -> {
+            boolean externalVpn = ctx != null && FpsVpnService.isExternalVpnConflict(ctx);
+            String bestHost = "";
+            int bestAvgMs = -1;
+            double bestJitterMs = 0.0;
+            double bestLossPct = 100.0;
+
+            JSArray results = new JSArray();
+            for (String host : targets) {
+                List<Integer> rtts = new ArrayList<>();
+                int failures = 0;
+                // 3 direct TCP port-443 handshake RTT probes (excludes HTTP/TLS parsing overhead)
+                for (int s = 0; s < 3; s++) {
+                    long startNs = System.nanoTime();
+                    try (Socket socket = new Socket()) {
+                        socket.connect(new InetSocketAddress(host, 443), 1200);
+                        long elapsedMs = Math.max(1L, Math.round((System.nanoTime() - startNs) / 1_000_000.0));
+                        rtts.add((int) elapsedMs);
+                    } catch (Exception e) {
+                        failures++;
+                    }
+                }
+
+                double lossPct = Math.round((failures / 3.0) * 1000.0) / 10.0;
+                int avgMs = -1;
+                double jitterMs = 0.0;
+                if (!rtts.isEmpty()) {
+                    // Use median / trimmed sample when 3 samples succeed so single OS scheduling spikes don't distort
+                    if (rtts.size() == 3) {
+                        List<Integer> sorted = new ArrayList<>(rtts);
+                        Collections.sort(sorted);
+                        avgMs = sorted.get(1);
+                    } else {
+                        int sum = 0;
+                        for (int v : rtts) sum += v;
+                        avgMs = Math.round(sum / (float) rtts.size());
+                    }
+                    if (rtts.size() >= 2) {
+                        double diffs = 0.0;
+                        for (int i = 1; i < rtts.size(); i++) {
+                            diffs += Math.abs(rtts.get(i) - rtts.get(i - 1));
+                        }
+                        jitterMs = Math.round((diffs / (rtts.size() - 1)) * 10.0) / 10.0;
+                    }
+                }
+
+                JSObject item = new JSObject();
+                item.put("host", host);
+                item.put("pingMs", avgMs);
+                item.put("jitterMs", jitterMs);
+                item.put("packetLossPercent", lossPct);
+                item.put("reachable", avgMs > 0);
+                results.put(item);
+
+                if (avgMs > 0 && (bestAvgMs < 0 || avgMs < bestAvgMs)) {
+                    bestAvgMs = avgMs;
+                    bestHost = host;
+                    bestJitterMs = jitterMs;
+                    bestLossPct = lossPct;
+                }
+            }
+
+            JSObject ret = new JSObject();
+            ret.put("bestHost", bestHost);
+            ret.put("bestPingMs", bestAvgMs);
+            ret.put("bestJitterMs", bestJitterMs);
+            ret.put("bestLossPercent", bestLossPct);
+            ret.put("externalVpnDetected", externalVpn);
+            ret.put("results", results);
+            call.resolve(ret);
+        });
+    }
+
+    @PluginMethod
+    public void getInstalledApps(PluginCall call) {
+        final Context ctx = getContext();
+        if (ctx == null) {
+            JSObject ret = new JSObject();
+            ret.put("apps", new JSArray());
+            ret.put("source", "unavailable");
+            call.resolve(ret);
+            return;
+        }
+        netProbeExecutor.execute(() -> {
+            JSArray appsArr = new JSArray();
+            try {
+                PackageManager pm = ctx.getPackageManager();
+                String selfPkg = ctx.getPackageName();
+                Intent mainIntent = new Intent(Intent.ACTION_MAIN, null);
+                mainIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+                List<ResolveInfo> launchables = pm.queryIntentActivities(mainIntent, 0);
+                Set<String> seen = new HashSet<>();
+
+                for (ResolveInfo ri : launchables) {
+                    if (ri.activityInfo == null) continue;
+                    String pkg = ri.activityInfo.packageName;
+                    if (pkg == null || pkg.equals(selfPkg) || seen.contains(pkg)) continue;
+                    seen.add(pkg);
+
+                    try {
+                        ApplicationInfo ai = pm.getApplicationInfo(pkg, 0);
+                        boolean isSystem = (ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0
+                            && (ai.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0;
+                        boolean isGame = isGameApp(ai, pkg);
+                        CharSequence labelCs = pm.getApplicationLabel(ai);
+                        String appName = labelCs != null ? labelCs.toString().trim() : pkg;
+                        String category = classifyAppCategory(pkg, appName, isSystem, isGame);
+                        String iconDataUrl = encodeDrawableToDataUrl(pm.getApplicationIcon(ai));
+
+                        JSObject obj = new JSObject();
+                        obj.put("packageName", pkg);
+                        obj.put("name", appName);
+                        obj.put("category", category);
+                        obj.put("isGame", isGame);
+                        obj.put("isSystem", isSystem);
+                        if (iconDataUrl != null) obj.put("iconDataUrl", iconDataUrl);
+                        appsArr.put(obj);
+                    } catch (Exception ignored) {}
+                }
+
+                // Fallback pass for launchable installed apps/games missed by launcher query
+                List<ApplicationInfo> allInstalled = pm.getInstalledApplications(0);
+                for (ApplicationInfo ai : allInstalled) {
+                    String pkg = ai.packageName;
+                    if (pkg == null || pkg.equals(selfPkg) || seen.contains(pkg)) continue;
+                    boolean isSystem = (ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0
+                        && (ai.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0;
+                    boolean isGame = isGameApp(ai, pkg);
+                    if (pm.getLaunchIntentForPackage(pkg) == null && !isGame) continue;
+                    seen.add(pkg);
+                    try {
+                        CharSequence labelCs = pm.getApplicationLabel(ai);
+                        String appName = labelCs != null ? labelCs.toString().trim() : pkg;
+                        String category = classifyAppCategory(pkg, appName, isSystem, isGame);
+                        String iconDataUrl = encodeDrawableToDataUrl(pm.getApplicationIcon(ai));
+
+                        JSObject obj = new JSObject();
+                        obj.put("packageName", pkg);
+                        obj.put("name", appName);
+                        obj.put("category", category);
+                        obj.put("isGame", isGame);
+                        obj.put("isSystem", isSystem);
+                        if (iconDataUrl != null) obj.put("iconDataUrl", iconDataUrl);
+                        appsArr.put(obj);
+                    } catch (Exception ignored) {}
+                }
+            } catch (Exception ignored) {}
+
+            JSObject ret = new JSObject();
+            ret.put("apps", appsArr);
+            ret.put("count", appsArr.length());
+            ret.put("source", "android_packagemanager");
+            call.resolve(ret);
+        });
+    }
+
+    @PluginMethod
+    public void getInstalledGames(PluginCall call) {
+        final Context ctx = getContext();
+        if (ctx == null) {
+            JSObject ret = new JSObject();
+            ret.put("games", new JSArray());
+            ret.put("source", "unavailable");
+            call.resolve(ret);
+            return;
+        }
+        netProbeExecutor.execute(() -> {
+            JSArray gamesArr = new JSArray();
+            try {
+                PackageManager pm = ctx.getPackageManager();
+                String selfPkg = ctx.getPackageName();
+                Intent mainIntent = new Intent(Intent.ACTION_MAIN, null);
+                mainIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+                List<ResolveInfo> launchables = pm.queryIntentActivities(mainIntent, 0);
+                Set<String> seen = new HashSet<>();
+
+                for (ResolveInfo ri : launchables) {
+                    if (ri.activityInfo == null) continue;
+                    String pkg = ri.activityInfo.packageName;
+                    if (pkg == null || pkg.equals(selfPkg) || seen.contains(pkg)) continue;
+                    seen.add(pkg);
+
+                    try {
+                        ApplicationInfo ai = pm.getApplicationInfo(pkg, 0);
+                        if (!isGameApp(ai, pkg)) continue;
+                        CharSequence labelCs = pm.getApplicationLabel(ai);
+                        String appName = labelCs != null ? labelCs.toString().trim() : pkg;
+                        String genre = classifyGameGenre(pkg, appName);
+                        String iconDataUrl = encodeDrawableToDataUrl(pm.getApplicationIcon(ai));
+
+                        JSObject obj = new JSObject();
+                        obj.put("packageName", pkg);
+                        obj.put("name", appName);
+                        obj.put("category", genre);
+                        obj.put("isGame", true);
+                        obj.put("isInstalled", true);
+                        if (iconDataUrl != null) obj.put("iconDataUrl", iconDataUrl);
+                        gamesArr.put(obj);
+                    } catch (Exception ignored) {}
+                }
+
+                // Fallback pass for installed games missed by standard CATEGORY_LAUNCHER query
+                List<ApplicationInfo> allInstalled = pm.getInstalledApplications(0);
+                for (ApplicationInfo ai : allInstalled) {
+                    String pkg = ai.packageName;
+                    if (pkg == null || pkg.equals(selfPkg) || seen.contains(pkg)) continue;
+                    if (!isGameApp(ai, pkg)) continue;
+                    if (pm.getLaunchIntentForPackage(pkg) == null) continue;
+                    seen.add(pkg);
+                    try {
+                        CharSequence labelCs = pm.getApplicationLabel(ai);
+                        String appName = labelCs != null ? labelCs.toString().trim() : pkg;
+                        String genre = classifyGameGenre(pkg, appName);
+                        String iconDataUrl = encodeDrawableToDataUrl(pm.getApplicationIcon(ai));
+
+                        JSObject obj = new JSObject();
+                        obj.put("packageName", pkg);
+                        obj.put("name", appName);
+                        obj.put("category", genre);
+                        obj.put("isGame", true);
+                        obj.put("isInstalled", true);
+                        if (iconDataUrl != null) obj.put("iconDataUrl", iconDataUrl);
+                        gamesArr.put(obj);
+                    } catch (Exception ignored) {}
+                }
+            } catch (Exception ignored) {}
+
+            JSObject ret = new JSObject();
+            ret.put("games", gamesArr);
+            ret.put("count", gamesArr.length());
+            ret.put("source", "android_packagemanager");
+            call.resolve(ret);
+        });
+    }
+
+    @PluginMethod
+    public void launchGamePackage(PluginCall call) {
+        String packageName = call.getString("packageName", "");
+        Context ctx = getContext();
+        if (ctx == null || packageName == null || packageName.trim().isEmpty()) {
+            JSObject ret = new JSObject();
+            ret.put("launched", false);
+            ret.put("installed", false);
+            call.resolve(ret);
+            return;
+        }
+
+        try {
+            PackageManager pm = ctx.getPackageManager();
+            Intent launchIntent = pm.getLaunchIntentForPackage(packageName.trim());
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(launchIntent);
+                JSObject ret = new JSObject();
+                ret.put("launched", true);
+                ret.put("installed", true);
+                ret.put("packageName", packageName.trim());
+                call.resolve(ret);
+                return;
+            }
+        } catch (Exception ignored) {}
+
+        JSObject ret = new JSObject();
+        ret.put("launched", false);
+        ret.put("installed", false);
+        ret.put("packageName", packageName.trim());
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void openStorePage(PluginCall call) {
+        String packageName = call.getString("packageName", "");
+        Context ctx = getContext();
+        if (ctx == null || packageName == null || packageName.trim().isEmpty()) {
+            JSObject ret = new JSObject();
+            ret.put("opened", false);
+            call.resolve(ret);
+            return;
+        }
+        String pkg = packageName.trim();
+        try {
+            Intent marketIntent = new Intent(
+                Intent.ACTION_VIEW,
+                android.net.Uri.parse("market://details?id=" + pkg)
+            );
+            marketIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(marketIntent);
+            JSObject ret = new JSObject();
+            ret.put("opened", true);
+            ret.put("packageName", pkg);
+            call.resolve(ret);
+            return;
+        } catch (Exception ignored) {}
+
+        try {
+            Intent webIntent = new Intent(
+                Intent.ACTION_VIEW,
+                android.net.Uri.parse("https://play.google.com/store/apps/details?id=" + pkg)
+            );
+            webIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(webIntent);
+            JSObject ret = new JSObject();
+            ret.put("opened", true);
+            ret.put("packageName", pkg);
+            call.resolve(ret);
+            return;
+        } catch (Exception ignored) {}
+
+        JSObject ret = new JSObject();
+        ret.put("opened", false);
+        call.resolve(ret);
+    }
+
+    @SuppressWarnings("deprecation")
+    private boolean isGameApp(ApplicationInfo ai, String pkg) {
+        if ((ai.flags & ApplicationInfo.FLAG_IS_GAME) != 0) return true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && ai.category == ApplicationInfo.CATEGORY_GAME) {
+            return true;
+        }
+        String p = pkg.toLowerCase(Locale.US);
+        return p.contains("tencent.ig") || p.contains("freefire") || p.contains("callofduty")
+            || p.contains("pubg") || p.contains("fortnite") || p.contains("roblox")
+            || p.contains("minecraft") || p.contains("mobile.legends") || p.contains("mobilelegends")
+            || p.contains("wildrift") || p.contains("supercell") || p.contains("asphalt")
+            || p.contains("genshin") || p.contains("starrail") || p.contains("wutheringwaves")
+            || p.contains("efootball") || p.contains("fifamobile") || p.contains("standoff2")
+            || p.contains("bloodstrike") || p.contains("newspike") || p.contains("farlight")
+            || p.contains("arenabreakout") || p.contains("dreamleague") || p.contains("spacemafia")
+            || p.contains("sgameglobal") || p.contains("carxtech");
+    }
+
+    private String classifyGameGenre(String pkg, String name) {
+        String p = (pkg + " " + name).toLowerCase(Locale.US);
+        if (p.contains("pubg") || p.contains("tencent.ig") || p.contains("freefire") || p.contains("callofduty")
+            || p.contains("warzone") || p.contains("fortnite") || p.contains("standoff") || p.contains("newspike")
+            || p.contains("bloodstrike") || p.contains("farlight") || p.contains("shooter") || p.contains("fps")
+            || p.contains("arenabreakout") || p.contains("uamo")) {
+            return "Shooter";
+        }
+        if (p.contains("mobile.legends") || p.contains("wildrift") || p.contains("sgame") || p.contains("honor of kings")
+            || p.contains("moba") || p.contains("dota") || p.contains("arenaofvalor")) {
+            return "MOBA";
+        }
+        if (p.contains("genshin") || p.contains("starrail") || p.contains("hkrpg") || p.contains("wuthering")
+            || p.contains("rpg") || p.contains("diablo")) {
+            return "RPG";
+        }
+        if (p.contains("roblox") || p.contains("minecraft") || p.contains("terraria")) {
+            return "Sandbox";
+        }
+        if (p.contains("asphalt") || p.contains("carx") || p.contains("racing") || p.contains("needforspeed")) {
+            return "Racing";
+        }
+        if (p.contains("fifa") || p.contains("pesam") || p.contains("efootball") || p.contains("dreamleague")
+            || p.contains("nba") || p.contains("cricket")) {
+            return "Sports";
+        }
+        if (p.contains("clash") || p.contains("strategy") || p.contains("lords")) {
+            return "Strategy";
+        }
+        if (p.contains("brawlstars") || p.contains("action")) {
+            return "Action";
+        }
+        return "Games";
+    }
+
+    private String classifyAppCategory(String pkg, String name, boolean isSystem, boolean isGame) {
+        if (isGame) return "Games";
+        String p = (pkg + " " + name).toLowerCase(Locale.US);
+        if (p.contains("whatsapp") || p.contains("instagram") || p.contains("facebook") || p.contains("snapchat")
+            || p.contains("discord") || p.contains("telegram") || p.contains("twitter") || p.contains("barcelona")
+            || p.contains("pinterest") || p.contains("orca") || p.contains("messenger") || p.contains("reddit")) {
+            return "Social";
+        }
+        if (p.contains("chrome") || p.contains("firefox") || p.contains("opera") || p.contains("brave")
+            || p.contains("edge") || p.contains("browser") || p.contains("ucmobile")) {
+            return "Browsers";
+        }
+        if (p.contains("youtube") || p.contains("netflix") || p.contains("spotify") || p.contains("tiktok")
+            || p.contains("musically") || p.contains("twitch") || p.contains("primevideo") || p.contains("hotstar")
+            || p.contains("kwai") || p.contains("like") || p.contains("mxplayer")) {
+            return "Entertainment";
+        }
+        if (isSystem || p.startsWith("com.android.") || p.startsWith("com.google.android.gms")) {
+            return "System";
+        }
+        return "Tools";
+    }
+
+    private String encodeDrawableToDataUrl(Drawable drawable) {
+        if (drawable == null) return null;
+        Bitmap bitmap = null;
+        boolean ownsBitmap = false;
+        try {
+            if (drawable instanceof BitmapDrawable && ((BitmapDrawable) drawable).getBitmap() != null) {
+                Bitmap src = ((BitmapDrawable) drawable).getBitmap();
+                bitmap = Bitmap.createScaledBitmap(src, 72, 72, true);
+                ownsBitmap = bitmap != src;
+            } else {
+                bitmap = Bitmap.createBitmap(72, 72, Bitmap.Config.ARGB_8888);
+                ownsBitmap = true;
+                Canvas canvas = new Canvas(bitmap);
+                drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
+                drawable.draw(canvas);
+            }
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.PNG, 85, baos);
+            String b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+            return "data:image/png;base64," + b64;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (ownsBitmap && bitmap != null && !bitmap.isRecycled()) {
+                bitmap.recycle();
+            }
+        }
     }
 
     @RequiresApi(api = Build.VERSION_CODES.S)
@@ -467,6 +997,7 @@ public class GamingEnginePlugin extends Plugin {
             } catch (Exception ignored) {}
             adpfSessionObj = null;
         }
+        netProbeExecutor.shutdownNow();
         super.handleOnDestroy();
     }
 }

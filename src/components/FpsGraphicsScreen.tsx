@@ -13,20 +13,22 @@ import {
 } from 'lucide-react';
 import { useBooster } from '../context/BoosterContext.tsx';
 import { sound } from '../utils/audio.ts';
+import { haptics } from '../utils/haptics.ts';
 import { FPSMode, OptimizationProfileMode } from '../types.ts';
-import { OPTIMIZATION_PROFILES } from '../utils/gamingEngine.ts';
+import { OPTIMIZATION_PROFILES, resolveNumericFps } from '../utils/gamingEngine.ts';
 
 export const FpsGraphicsScreen: React.FC = () => {
   const { 
     state, 
     setFpsMode, 
     applyGraphicsSettings, 
-    setCurrentScreen,
     deviceCapabilities,
     applyOptimizationProfile,
     bottleneckReport,
     gamesList,
     updatePerGameProfile,
+    isFpsTierUnlocked,
+    setCurrentScreen,
   } = useBooster();
 
   const [selectedFps, setSelectedFps] = useState<FPSMode>(state.activeFps);
@@ -39,15 +41,13 @@ export const FpsGraphicsScreen: React.FC = () => {
   const [appliedToast, setAppliedToast] = useState(false);
 
   const handleSelectFps = (mode: FPSMode) => {
+    haptics.selection();
     sound.playClick();
-    if (mode === '120' && !state.isPro && !state.isBoosting) {
-      setCurrentScreen('premium');
-      return;
-    }
     setSelectedFps(mode);
   };
 
   const handleApply = () => {
+    haptics.impactMedium();
     sound.playBoost();
     setFpsMode(selectedFps);
     applyGraphicsSettings({
@@ -67,7 +67,7 @@ export const FpsGraphicsScreen: React.FC = () => {
       {appliedToast && (
         <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-cyan-900 border border-cyan-400 text-white px-5 py-2.5 rounded-full text-xs font-bold shadow-2xl shadow-cyan-950 flex items-center space-x-2 animate-bounce">
           <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          <span>Graphics & {selectedFps} FPS Applied Successfully!</span>
+          <span>Graphics &amp; {resolveNumericFps(selectedFps, state.maxHardwareHz)} FPS Applied Successfully!</span>
         </div>
       )}
 
@@ -123,6 +123,7 @@ export const FpsGraphicsScreen: React.FC = () => {
                 key={p.id}
                 type="button"
                 onClick={() => {
+                  haptics.selection();
                   applyOptimizationProfile(p.id as OptimizationProfileMode);
                   setSelectedFps(p.targetFps);
                 }}
@@ -153,96 +154,96 @@ export const FpsGraphicsScreen: React.FC = () => {
           </div>
         </div>
 
-        {Number(selectedFps) > (state.maxHardwareHz || 60) && (
+        {resolveNumericFps(selectedFps, state.maxHardwareHz) > (state.maxHardwareHz || 60) && (
           <div className="mb-3 p-2.5 rounded-xl bg-amber-950/60 border border-amber-500/60 text-amber-200 text-[10px] font-mono">
             Display panel supports up to {state.maxHardwareHz}Hz. Android caps visible output at hardware max; engine focuses on frame pacing stability.
           </div>
         )}
 
-        {/* Radio List */}
+        {/* Universal FPS Radio List */}
         <div className="space-y-2.5">
-          {/* 60 FPS - Smooth */}
-          <div
-            onClick={() => handleSelectFps('60')}
-            className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
-              selectedFps === '60'
-                ? 'bg-cyan-950/40 border-emerald-400/80 shadow-md shadow-emerald-950/40'
-                : 'bg-[#050c1f] border-slate-800 hover:border-slate-700'
-            }`}
-          >
-            <div className="flex items-center space-x-3">
-              <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all ${
-                selectedFps === '60' ? 'border-emerald-400 bg-emerald-500' : 'border-slate-600'
-              }`}>
-                {selectedFps === '60' && <Check className="w-3.5 h-3.5 text-black stroke-[3]" />}
-              </div>
-              <span className="font-orbitron font-bold text-xs text-slate-200">
-                60 FPS - Smooth
-              </span>
-            </div>
-            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/40">
-              Low Battery Drain
-            </span>
-          </div>
+          {(
+            [
+              { mode: '30' as FPSMode, label: '30 FPS - Power Saver', tag: 'Ultra Low Battery', accent: 'slate', minHz: 30, tier: null },
+              { mode: '45' as FPSMode, label: '45 FPS - Balanced', tag: 'Mid-Range Stable', accent: 'sky', minHz: 45, tier: null },
+              { mode: '60' as FPSMode, label: '60 FPS - Smooth', tag: 'Low Battery Drain', accent: 'emerald', minHz: 60, tier: '60' as const },
+              { mode: '90' as FPSMode, label: '90 FPS - Ultra', tag: 'Competitive', accent: 'cyan', minHz: 90, tier: '90' as const },
+              { mode: '120' as FPSMode, label: '120 FPS - Extreme', tag: 'Max Hz', accent: 'pink', minHz: 120, tier: '120' as const },
+              { mode: 'higher' as FPSMode, label: `Higher FPS (${state.maxHardwareHz}Hz Max)`, tag: 'Hardware Adaptive', accent: 'amber', minHz: 60, tier: null },
+            ] as const
+          ).map((opt) => {
+            const isSelected = selectedFps === opt.mode;
+            const supported = (state.maxHardwareHz || 60) >= opt.minHz;
+            const unlocked = opt.tier ? isFpsTierUnlocked(opt.mode) : true;
 
-          {/* 90 FPS - Ultra */}
-          <div
-            onClick={() => handleSelectFps('90')}
-            className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
-              selectedFps === '90'
-                ? 'bg-cyan-950/40 border-cyan-400/80 shadow-md shadow-cyan-950/40'
-                : 'bg-[#050c1f] border-slate-800 hover:border-slate-700'
-            }`}
-          >
-            <div className="flex items-center space-x-3">
-              <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all ${
-                selectedFps === '90' ? 'border-cyan-400 bg-cyan-400' : 'border-slate-600'
-              }`}>
-                {selectedFps === '90' && <Check className="w-3.5 h-3.5 text-black stroke-[3]" />}
-              </div>
-              <span className="font-orbitron font-bold text-xs text-slate-200">
-                90 FPS - Ultra
-              </span>
-            </div>
-            <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-800/40">
-              Competitive
-            </span>
-          </div>
+            return (
+              <div
+                key={opt.mode}
+                onClick={() => handleSelectFps(opt.mode)}
+                className={`p-3 rounded-xl border flex items-center justify-between gap-2 cursor-pointer transition-all ${
+                  isSelected
+                    ? opt.mode === '120'
+                      ? 'bg-[#1e0724] border-pink-400 shadow-[0_0_15px_rgba(236,72,153,0.4)]'
+                      : 'bg-cyan-950/40 border-cyan-400/80 shadow-md shadow-cyan-950/40'
+                    : 'bg-[#050c1f] border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center space-x-3 min-w-0">
+                  <div
+                    className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 transition-all ${
+                      isSelected ? 'border-cyan-400 bg-cyan-400' : 'border-slate-600'
+                    }`}
+                  >
+                    {isSelected && <Check className="w-3.5 h-3.5 text-black stroke-[3]" />}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center space-x-1.5">
+                      <span className="font-orbitron font-bold text-xs text-slate-100 truncate">
+                        {opt.label}
+                      </span>
+                      {opt.mode === '120' && (
+                        <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" />
+                      )}
+                    </div>
+                    <span
+                      className={`text-[9px] font-mono block mt-0.5 ${
+                        supported ? 'text-emerald-300' : 'text-amber-300'
+                      }`}
+                    >
+                      {supported ? 'SUPPORTED' : `UNSUPPORTED ON DEVICE (${state.maxHardwareHz}Hz max)`}
+                    </span>
+                  </div>
+                </div>
 
-          {/* 120 FPS - Extreme */}
-          <div
-            onClick={() => handleSelectFps('120')}
-            className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all relative ${
-              selectedFps === '120'
-                ? 'bg-[#1e0724] border-pink-400 shadow-[0_0_15px_rgba(236,72,153,0.4)]'
-                : 'bg-[#050c1f] border-slate-800 hover:border-slate-700'
-            }`}
-          >
-            <div className="flex items-center space-x-3">
-              <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all ${
-                selectedFps === '120' ? 'border-pink-400 bg-pink-500' : 'border-slate-600'
-              }`}>
-                {selectedFps === '120' && <Check className="w-3.5 h-3.5 text-white stroke-[3]" />}
+                <div className="flex items-center space-x-1.5 shrink-0">
+                  {opt.tier ? (
+                    unlocked ? (
+                      <span className="text-[9px] font-mono font-bold text-emerald-300 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-700/50">
+                        UNLOCKED
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          haptics.selection();
+                          sound.playClick();
+                          setCurrentScreen('reward_ad');
+                        }}
+                        className="text-[9px] font-mono font-bold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-600/60 hover:border-amber-400 cursor-pointer"
+                      >
+                        Ad Unlockable
+                      </button>
+                    )
+                  ) : (
+                    <span className="text-[9px] font-mono text-cyan-300 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-800/40">
+                      {opt.tag}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center space-x-1.5">
-                <span className="font-orbitron font-bold text-xs text-slate-100">
-                  120 FPS - Extreme
-                </span>
-                <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-1">
-              <span className="text-[10px] font-mono text-pink-300 bg-pink-950/80 px-2 py-0.5 rounded border border-pink-800/40 font-bold">
-                Max Hz
-              </span>
-              {!state.isPro && !state.isBoosting && (
-                <span className="text-[9px] bg-gradient-to-r from-amber-400 to-yellow-300 text-black font-bold px-1.5 py-0.5 rounded font-mono">
-                  VIP
-                </span>
-              )}
-            </div>
-          </div>
+            );
+          })}
         </div>
       </div>
 
@@ -265,6 +266,7 @@ export const FpsGraphicsScreen: React.FC = () => {
           </div>
           <button
             onClick={() => {
+              haptics.selection();
               sound.playToggle(!graphicsOpt);
               setGraphicsOpt(!graphicsOpt);
             }}
@@ -289,6 +291,7 @@ export const FpsGraphicsScreen: React.FC = () => {
           </div>
           <button
             onClick={() => {
+              haptics.selection();
               sound.playToggle(!perfMode);
               setPerfMode(!perfMode);
             }}
@@ -313,6 +316,7 @@ export const FpsGraphicsScreen: React.FC = () => {
           </div>
           <button
             onClick={() => {
+              haptics.selection();
               sound.playToggle(!reduceLag);
               setReduceLag(!reduceLag);
             }}
@@ -337,6 +341,7 @@ export const FpsGraphicsScreen: React.FC = () => {
           </div>
           <button
             onClick={() => {
+              haptics.selection();
               sound.playToggle(!improveRendering);
               setImproveRendering(!improveRendering);
             }}
@@ -377,6 +382,7 @@ export const FpsGraphicsScreen: React.FC = () => {
         <button
           type="button"
           onClick={() => {
+            haptics.impactMedium();
             updatePerGameProfile(targetGamePkg, {
               targetFps: selectedFps,
               profileMode: state.activeProfile,

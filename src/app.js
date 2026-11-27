@@ -17,11 +17,6 @@ function calculateBrowserTempCacheKb() {
     const val = localStorage.getItem(key);
     if (val) totalBytes += val.length * 2;
   }
-  const hist = localStorage.getItem('fps_booster_fps_history_v1');
-  if (hist && hist.length > 2048) {
-    // Only count excess historical trace buffer beyond latest compact window
-    totalBytes += (hist.length - 2048) * 2;
-  }
   return Math.max(0, Math.round(totalBytes / 1024));
 }
 
@@ -37,10 +32,13 @@ async function getBrowserStorageEstimate() {
       if (est && typeof est.quota === 'number' && est.quota > 0) {
         const quotaGb = est.quota / (1024 * 1024 * 1024);
         const usageGb = (est.usage || 0) / (1024 * 1024 * 1024);
-        if (quotaGb >= 0.5) {
+        // Chromium returns a synthetic ~10.0 GB origin quota with ~0 usage when disk metrics are sandboxed.
+        // Only adopt StorageManager metrics when usage is real (> 0.05 GB) and free < total.
+        const isSyntheticEmptyOriginQuota = quotaGb >= 9.0 && quotaGb <= 11.0 && usageGb < 0.05;
+        if (quotaGb >= 1.0 && !isSyntheticEmptyOriginQuota && usageGb >= 0.05) {
           totalGb = Number(quotaGb.toFixed(1));
-          freeGb = Number(Math.max(0.1, quotaGb - usageGb).toFixed(1));
-          usedPercent = Math.min(99, Math.max(1, Math.round((usageGb / quotaGb) * 100)));
+          freeGb = Number(Math.max(0.1, Math.min(totalGb - 0.1, quotaGb - usageGb)).toFixed(1));
+          usedPercent = Math.min(99, Math.max(1, Math.round(((totalGb - freeGb) / totalGb) * 100)));
         }
       }
     }
@@ -193,7 +191,13 @@ export async function clearAppTempCache() {
   };
 }
 
+let isUpdatingRealStats = false;
+
 export async function updateRealStats() {
+  if (isUpdatingRealStats) {
+    return typeof window !== 'undefined' ? window['__REAL_STATS__'] || null : null;
+  }
+  isUpdatingRealStats = true;
   try {
     let ram, temp, fps, storage;
     try {
@@ -242,17 +246,8 @@ export async function updateRealStats() {
       }
     }
 
-    const elRam = document.getElementById('ram');
-    const elRamPercent = document.getElementById('ramPercent');
-    const elTemp = document.getElementById('temp');
-    const elBattery = document.getElementById('battery');
-    const elFps = document.getElementById('fps');
-
-    if (elRam && ram?.used && ram?.total) elRam.innerText = ram.used + ' / ' + ram.total + ' GB';
-    if (elRamPercent && ram?.percent !== undefined) elRamPercent.innerText = ram.percent + '%';
-    if (elTemp && temp?.temp) elTemp.innerText = temp.temp + '°C';
-    if (elBattery && temp?.battery !== undefined) elBattery.innerText = temp.battery + '%';
-    if (elFps && fps?.fps !== undefined) elFps.innerText = String(fps.fps);
+    // Telemetry values are delivered to React via the 'fpsbooster_realstats' event below;
+    // avoid mutating React-owned DOM text nodes directly.
 
     const detail = {
       ramUsed: ram?.used,
@@ -283,20 +278,27 @@ export async function updateRealStats() {
     return detail;
   } catch (e) {
     return null;
+  } finally {
+    isUpdatingRealStats = false;
   }
 }
 
 if (typeof window !== 'undefined') {
-  // Visibility-aware telemetry polling: zero CPU/battery drain when app is backgrounded
+  // Lightweight visibility- & battery-saver-aware telemetry polling
+  let lastBgPollAt = 0;
   setInterval(() => {
-    if (typeof document === 'undefined' || !document.hidden) {
-      updateRealStats();
-    }
-  }, 2000);
+    if (typeof document !== 'undefined' && document.hidden) return;
+    const now = Date.now();
+    const minCadenceMs = window['__FPS_BATTERY_SAVER__'] ? 11500 : 3800;
+    if (now - lastBgPollAt < minCadenceMs) return;
+    lastBgPollAt = now;
+    updateRealStats();
+  }, 4000);
 
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
+        lastBgPollAt = Date.now();
         updateRealStats();
       }
     });

@@ -1,19 +1,33 @@
-import React from 'react';
-import { LayoutGrid } from 'lucide-react';
+import React, { useState } from 'react';
 
 interface AppIconProps {
   name: string;
   packageName: string;
   iconName?: string;
+  iconDataUrl?: string;
   size?: number;
 }
 
-export const RealAppIcon: React.FC<AppIconProps> = ({ name, packageName, iconName, size = 48 }) => {
+export const RealAppIcon: React.FC<AppIconProps> = ({ name, packageName, iconName, iconDataUrl }) => {
+  const [imgFailed, setImgFailed] = useState(false);
   const pkg = packageName.toLowerCase();
   const icon = (iconName || name).toLowerCase();
 
   // 48x48 rounded square icon container
   const containerClass = `w-12 h-12 rounded-xl flex items-center justify-center shadow-md shrink-0 overflow-hidden relative`;
+
+  if (iconDataUrl && !imgFailed) {
+    return (
+      <div className={`${containerClass} bg-slate-900 border border-cyan-900/50`}>
+        <img
+          src={iconDataUrl}
+          alt={name}
+          onError={() => setImgFailed(true)}
+          className="w-full h-full object-cover"
+        />
+      </div>
+    );
+  }
 
   // WhatsApp
   if (pkg.includes('whatsapp') || icon.includes('whatsapp')) {
@@ -286,11 +300,143 @@ export const RealAppIcon: React.FC<AppIconProps> = ({ name, packageName, iconNam
     );
   }
 
-  // DEFAULT FALLBACK: Real grey placeholder Icon(Icons.apps) in 48x48 rounded square
-  // NEVER show text circles (WA, TT, etc.)!
+  // Recognized Games Vector Emblems (when native iconDataUrl isn't present in Web Preview or Catalog)
+  if (pkg.includes('tencent.ig') || pkg.includes('pubg') || icon.includes('pubg') || icon.includes('bgmi')) {
+    return (
+      <div className={`${containerClass} bg-gradient-to-br from-amber-500 via-orange-600 to-stone-900 border border-amber-300/60`}>
+        <svg viewBox="0 0 24 24" className="w-6 h-6 text-white" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="7" />
+          <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+          <circle cx="12" cy="12" r="2" fill="currentColor" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (pkg.includes('freefire') || icon.includes('free fire')) {
+    return (
+      <div className={`${containerClass} bg-gradient-to-br from-red-600 via-orange-500 to-black border border-red-400/60`}>
+        <svg viewBox="0 0 24 24" className="w-6 h-6 text-amber-200" fill="currentColor">
+          <path d="M13.5 2s.8 3.2-1.5 5.4c-1.7 1.6-2 3.8-.7 5.5.4.5 1.2.4 1.4-.2.4-1.1 1.4-2 2.6-2.3 0 0 2.7 2.2 2.7 5.3A6 6 0 0 1 12 22a6 6 0 0 1-6-6c0-4.2 3.6-7.6 7.5-14z" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (pkg.includes('callofduty') || pkg.includes('warzone') || pkg.includes('standoff') || pkg.includes('newspike') || pkg.includes('uamo') || icon.includes('call of duty')) {
+    return (
+      <div className={`${containerClass} bg-gradient-to-br from-cyan-600 via-slate-800 to-black border border-cyan-400/60`}>
+        <svg viewBox="0 0 24 24" className="w-6 h-6 text-cyan-300" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M12 2l7 4v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6l7-4z" />
+          <circle cx="12" cy="11" r="2.5" fill="currentColor" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (pkg.includes('mobile.legends') || pkg.includes('wildrift') || pkg.includes('sgame') || icon.includes('legends') || icon.includes('honor of kings')) {
+    return (
+      <div className={`${containerClass} bg-gradient-to-br from-blue-600 via-indigo-700 to-amber-500 border border-blue-300/60`}>
+        <svg viewBox="0 0 24 24" className="w-6 h-6 text-amber-200" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M14.5 17.5L3 6V3h3l11.5 11.5" />
+          <path d="M13 19l6-6M16 16l4 4M9.5 6.5L21 18v3h-3L6.5 9.5" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (pkg.includes('genshin') || pkg.includes('hkrpg') || pkg.includes('wuthering') || icon.includes('genshin') || icon.includes('honkai')) {
+    return (
+      <div className={`${containerClass} bg-gradient-to-br from-purple-600 via-indigo-600 to-cyan-500 border border-purple-300/60`}>
+        <svg viewBox="0 0 24 24" className="w-6 h-6 text-white" fill="currentColor">
+          <path d="M12 2l2.9 6.6L22 10l-5.2 4.6L18.2 22 12 18.3 5.8 22l1.4-7.4L2 10l7.1-1.4L12 2z" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (pkg.includes('roblox') || pkg.includes('minecraft') || icon.includes('roblox') || icon.includes('minecraft')) {
+    return (
+      <div className={`${containerClass} bg-gradient-to-br from-emerald-500 via-teal-700 to-slate-900 border border-emerald-300/60`}>
+        <svg viewBox="0 0 24 24" className="w-6 h-6 text-white" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M12 2l9 5v10l-9 5-9-5V7l9-5z" />
+          <path d="M12 12l9-5M12 12v10M12 12L3 7" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (pkg.includes('supercell') || icon.includes('clash') || icon.includes('brawl')) {
+    return (
+      <div className={`${containerClass} bg-gradient-to-br from-amber-400 via-orange-600 to-red-700 border border-yellow-300/60`}>
+        <svg viewBox="0 0 24 24" className="w-6 h-6 text-yellow-100" fill="currentColor">
+          <path d="M3 18h18v2H3v-2zm0-2l2-9 4.5 4L12 4l2.5 7L19 7l2 9H3z" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (pkg.includes('fifa') || pkg.includes('pesam') || icon.includes('football') || icon.includes('fc mobile')) {
+    return (
+      <div className={`${containerClass} bg-gradient-to-br from-emerald-600 via-cyan-700 to-slate-900 border border-emerald-400/60`}>
+        <svg viewBox="0 0 24 24" className="w-6 h-6 text-white" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="9" />
+          <polygon points="12,7 16,10 14.5,15 9.5,15 8,10" fill="currentColor" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (pkg.includes('gameloft') || pkg.includes('carx') || icon.includes('asphalt') || icon.includes('carx') || icon.includes('racing')) {
+    return (
+      <div className={`${containerClass} bg-gradient-to-br from-pink-600 via-rose-600 to-slate-900 border border-pink-400/60`}>
+        <svg viewBox="0 0 24 24" className="w-6 h-6 text-white" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M5 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0" />
+          <path d="M3 14l2-5h10l3 5h3v3h-2M9 17h6" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (pkg.includes('fortnite') || icon.includes('fortnite')) {
+    return (
+      <div className={`${containerClass} bg-gradient-to-br from-sky-500 via-blue-700 to-indigo-950 border border-sky-300/60`}>
+        <svg viewBox="0 0 24 24" className="w-6 h-6 text-white" fill="currentColor">
+          <path d="M13 2L4 14h6l-1 8 11-12h-6l-1-8z" />
+        </svg>
+      </div>
+    );
+  }
+
+  // Generic Game / App Emblem (clean vector shield instead of 4-box grid)
+  const isLikelyGame =
+    pkg.includes('game') ||
+    icon.includes('game') ||
+    icon.includes('shooter') ||
+    icon.includes('moba') ||
+    icon.includes('arena') ||
+    icon.includes('battle');
+
+  if (isLikelyGame) {
+    return (
+      <div className={`${containerClass} bg-gradient-to-br from-cyan-600 via-blue-800 to-slate-950 border border-cyan-400/50`}>
+        <svg viewBox="0 0 24 24" className="w-6 h-6 text-cyan-200" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="7" width="18" height="10" rx="4" />
+          <path d="M7 12h4M9 10v4" />
+          <circle cx="15.5" cy="11" r="1" fill="currentColor" />
+          <circle cx="17.5" cy="13" r="1" fill="currentColor" />
+        </svg>
+      </div>
+    );
+  }
+
+  // Fallback for other system/utility apps when native iconDataUrl is unavailable
   return (
-    <div className={`${containerClass} bg-slate-800 border border-slate-700`}>
-      <LayoutGrid className="w-6 h-6 text-slate-400" />
+    <div className={`${containerClass} bg-gradient-to-br from-slate-800 to-slate-950 border border-cyan-900/60`}>
+      <svg viewBox="0 0 24 24" className="w-6 h-6 text-cyan-300" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M12 2l8 4v6c0 5-3.4 9-8 10-4.6-1-8-5-8-10V6l8-4z" />
+        <path d="M9 12l2 2 4-4" />
+      </svg>
     </div>
   );
 };

@@ -1,7 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { 
-  Play, 
-  Pause, 
   RotateCcw, 
   Zap, 
   Flame, 
@@ -11,8 +9,6 @@ import {
   CheckCircle2, 
   ShieldCheck, 
   Sparkles, 
-  Square,
-  Smartphone,
   Globe2,
   RefreshCw,
   Radio,
@@ -32,14 +28,21 @@ import {
 } from 'lucide-react';
 import { useBooster } from '../context/BoosterContext.tsx';
 import { sound } from '../utils/audio.ts';
+import { haptics } from '../utils/haptics.ts';
 import { PerformanceHistoryGraph } from './PerformanceHistoryGraph.tsx';
 import { ThermalMonitorPanel } from './ThermalMonitorPanel.tsx';
-import { formatBytesCompact } from '../utils/gamingEngine.ts';
+import { WebSocketPingCard } from './WebSocketPingCard.tsx';
+import { BoostStatusCard } from './BoostStatusCard.tsx';
+import { LatencyMonitor } from './LatencyMonitor.tsx';
+import { formatBytesCompact, resolveNumericFps } from '../utils/gamingEngine.ts';
 
 export const GamingDashboard: React.FC = () => {
   const { 
     state, 
-    stopGamingMode, 
+    masterBoostActive,
+    setCurrentScreen,
+    superBoost,
+    recoveryHistory,
     refreshHardwareTelemetry,
     clearTemporaryCache,
     bottleneckReport,
@@ -54,12 +57,13 @@ export const GamingDashboard: React.FC = () => {
     lastProbedTime,
     runPingProbe,
     selectPingRegion,
-    fpsHistory,
     cloudBackend,
     firewallState,
     appsList,
     networkDiagnostics,
     runFullNetworkDiagnostics,
+    optimizeNetworkRoute,
+    toggleAutoOptimizeNetwork,
     smartSession,
     gamesList,
     launchGameWithAutoBoost,
@@ -72,20 +76,11 @@ export const GamingDashboard: React.FC = () => {
     applyThermalCooldownProfile,
   } = useBooster();
 
-  const [sessionSeconds, setSessionSeconds] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [cleanedToast, setCleanedToast] = useState<string | null>(null);
   const [showCacheConfirmModal, setShowCacheConfirmModal] = useState(false);
 
-  // Visibility-aware session timer counter
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (typeof document === 'undefined' || !document.hidden) {
-        setSessionSeconds(s => s + 1);
-      }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+  const remainingSec = Math.max(0, state.boostTimeRemainingSec || 0);
 
   const formatTimer = (sec: number) => {
     const hrs = Math.floor(sec / 3600);
@@ -120,17 +115,31 @@ export const GamingDashboard: React.FC = () => {
     sound.playSuccess();
   };
 
-  // Realistic Latency Thresholds:
-  // < 80ms = GOOD, 80-200ms = MODERATE, > 200ms = HIGH
-  const getPingQuality = (ms: number): { label: string; textColor: string; badgeClass: string } => {
-    if (ms < 80) {
+  // Honest Latency Thresholds (20-40ms target band, never altered):
+  // <= 40ms = OPTIMAL (20-40ms Target), 41-80ms = GOOD, 81-160ms = MODERATE, > 160ms = HIGH
+  const getPingQuality = (ms: number, reachable: boolean = true): { label: string; textColor: string; badgeClass: string } => {
+    if (!reachable || ms <= 0) {
       return {
-        label: 'GOOD',
-        textColor: 'text-emerald-400',
-        badgeClass: 'text-emerald-400 border-emerald-500/50 bg-emerald-950/40',
+        label: 'PROBING',
+        textColor: 'text-slate-400',
+        badgeClass: 'text-slate-300 border-slate-600 bg-slate-900/70',
       };
     }
-    if (ms <= 200) {
+    if (ms <= 40) {
+      return {
+        label: '20-40ms TARGET',
+        textColor: 'text-emerald-400',
+        badgeClass: 'text-emerald-300 border-emerald-500/60 bg-emerald-950/50',
+      };
+    }
+    if (ms <= 80) {
+      return {
+        label: 'GOOD',
+        textColor: 'text-cyan-300',
+        badgeClass: 'text-cyan-300 border-cyan-500/50 bg-cyan-950/40',
+      };
+    }
+    if (ms <= 160) {
       return {
         label: 'MODERATE',
         textColor: 'text-amber-400',
@@ -144,8 +153,9 @@ export const GamingDashboard: React.FC = () => {
     };
   };
 
-  const activePingQuality = getPingQuality(activeRegion.currentPingMs);
-  const isHighPing = activeRegion.currentPingMs > 200;
+  const activePingMs = activeRegion.currentPingMs > 0 ? activeRegion.currentPingMs : networkDiagnostics.pingMs;
+  const activePingQuality = getPingQuality(activePingMs, activeRegion.reachable !== false);
+  const isHighPing = activePingMs > 160;
 
   return (
     <div className="flex-1 overflow-y-auto px-4 pb-6 pt-1 space-y-4">
@@ -225,12 +235,20 @@ export const GamingDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* Prominent Master Boost Status Summary Card */}
+      <BoostStatusCard />
+
+      {/* Live Network Quality & 60s Ping History Monitor */}
+      <LatencyMonitor />
+
       {/* Top Game / Boost Profile Status Header */}
       <div className={`p-3 rounded-2xl border flex items-center justify-between gap-2 transition-colors ${
         thermalMonitor.severity === 'critical'
           ? 'bg-red-950/45 border-red-500/70'
           : thermalMonitor.isHighTempWarning || thermalMonitor.severity === 'high'
           ? 'bg-orange-950/40 border-orange-500/70'
+          : masterBoostActive
+          ? 'bg-[#06183b] border-emerald-500/50'
           : 'bg-[#071333] border-cyan-900/60'
       }`}>
         <div className="flex items-center space-x-2.5 min-w-0 flex-1">
@@ -239,6 +257,8 @@ export const GamingDashboard: React.FC = () => {
               ? 'bg-red-500/20 border-red-400/70 text-red-300'
               : thermalMonitor.isHighTempWarning || thermalMonitor.severity === 'high'
               ? 'bg-orange-500/20 border-orange-400/70 text-orange-300'
+              : masterBoostActive
+              ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-300'
               : 'bg-cyan-500/20 border-cyan-400/50 text-cyan-400'
           }`}>
             {thermalMonitor.isHighTempWarning || thermalMonitor.severity === 'high' || thermalMonitor.severity === 'critical' ? (
@@ -249,10 +269,16 @@ export const GamingDashboard: React.FC = () => {
           </div>
           <div className="min-w-0">
             <h3 className="font-orbitron font-bold text-xs text-white break-words">
-              {activeGame ? activeGame.name : 'High Priority Boost'}
+              {masterBoostActive
+                ? activeGame
+                  ? activeGame.name
+                  : 'High Priority Boost'
+                : activeGame
+                ? `${activeGame.name} · Ready`
+                : 'Master Boost Ready'}
             </h3>
             <p className="text-[10px] text-cyan-400 font-mono break-words tabular-nums">
-              {activeGame ? activeGame.packageName : 'All Games Whitelisted'} · {thermalMonitor.currentTempC.toFixed(1)}°C
+              {activeGame ? activeGame.packageName : 'Game Whitelist Ready'} · {thermalMonitor.currentTempC.toFixed(1)}°C
             </p>
           </div>
         </div>
@@ -262,7 +288,9 @@ export const GamingDashboard: React.FC = () => {
             ? 'bg-red-950 text-red-300 border-red-500/70'
             : thermalMonitor.isHighTempWarning || thermalMonitor.severity === 'high'
             ? 'bg-orange-950 text-orange-300 border-orange-500/70'
-            : 'bg-emerald-950 text-emerald-400 border-emerald-700/60'
+            : masterBoostActive
+            ? 'bg-emerald-950 text-emerald-400 border-emerald-600/60'
+            : 'bg-slate-900 text-slate-300 border-slate-700'
         }`}>
           {thermalMonitor.severity === 'critical' ? (
             <>
@@ -275,34 +303,44 @@ export const GamingDashboard: React.FC = () => {
               <span>HIGH TEMP {thermalMonitor.currentTempC.toFixed(0)}°C</span>
             </>
           ) : (
-            <span>RUNNING</span>
+            <span>{masterBoostActive ? 'BOOST ON' : 'BOOST OFF · READY'}</span>
           )}
         </span>
       </div>
 
-      {/* Center: Circular Gaming Timer 00:12:27 "Gaming..." */}
+      {/* Center: Circular Countdown Boost Timer */}
       <div className="flex flex-col items-center justify-center py-2 relative">
         <div className="relative flex items-center justify-center">
           {/* Neon Ring */}
-          <div className="w-48 h-48 rounded-full border-4 border-cyan-500/30 flex items-center justify-center relative shadow-[0_0_35px_rgba(0,191,255,0.4)]">
-            {/* Spinning accent dash */}
-            <div className="absolute inset-0 rounded-full border-4 border-t-cyan-400 border-r-transparent border-b-transparent border-l-transparent animate-[spin_4s_linear_infinite]" />
+          <div className={`w-48 h-48 rounded-full border-4 flex items-center justify-center relative ${
+            masterBoostActive
+              ? 'border-emerald-500/40 shadow-[0_0_35px_rgba(16,185,129,0.35)]'
+              : 'border-cyan-500/25 shadow-[0_0_24px_rgba(0,191,255,0.2)]'
+          }`}>
+            {/* Spinning accent dash only when Boost ON */}
+            {masterBoostActive && (
+              <div className="absolute inset-0 rounded-full border-4 border-t-emerald-400 border-r-transparent border-b-transparent border-l-transparent animate-[spin_4s_linear_infinite]" />
+            )}
             
             <div className="flex flex-col items-center text-center">
-              <span className="text-[11px] text-cyan-400 font-orbitron font-bold tracking-widest uppercase mb-1">
-                Gaming...
+              <span className={`text-[11px] font-orbitron font-bold tracking-widest uppercase mb-1 ${
+                masterBoostActive ? 'text-emerald-400' : 'text-cyan-400'
+              }`}>
+                {masterBoostActive ? 'Boost Active' : remainingSec > 0 ? 'Countdown Ready' : 'Boost OFF'}
               </span>
-              <span className="font-orbitron font-black text-2xl text-white tracking-wider drop-shadow-[0_0_12px_rgba(255,255,255,0.7)]">
-                {formatTimer(sessionSeconds)}
+              <span className="font-orbitron font-black text-2xl text-white tracking-wider tabular-nums drop-shadow-[0_0_12px_rgba(255,255,255,0.7)]">
+                {formatTimer(remainingSec)}
               </span>
-              <span className="text-[10px] text-emerald-400 font-mono mt-1 flex items-center space-x-1">
+              <span className={`text-[10px] font-mono mt-1 flex items-center space-x-1 ${
+                masterBoostActive ? 'text-emerald-400' : 'text-slate-400'
+              }`}>
                 <ShieldCheck className="w-3 h-3" />
                 <span>
-                  {firewallState.enabled
+                  {masterBoostActive
                     ? firewallState.isNativeAndroid
                       ? 'VPN FIREWALL ACTIVE'
-                      : 'FIREWALL RULES READY'
-                    : 'ENGINE STANDBY'}
+                      : 'LOCAL FILTER ACTIVE'
+                    : 'BOOST OFF · READY'}
                 </span>
               </span>
             </div>
@@ -327,7 +365,7 @@ export const GamingDashboard: React.FC = () => {
               </span>
             ) : (
               <span className="text-[10px] text-emerald-400 font-mono block mt-1 leading-tight">
-                Target {Math.min(Number(state.activeFps), state.maxHardwareHz || 120)} FPS
+                Target {Math.min(resolveNumericFps(state.activeFps, state.maxHardwareHz), state.maxHardwareHz || 120)} FPS
               </span>
             )}
           </div>
@@ -443,23 +481,42 @@ export const GamingDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Ping Card (Full width, synced with lowest-ping region) */}
-        <div className="col-span-2 bg-[#071129]/90 border border-cyan-900/60 rounded-2xl p-3.5 shadow-xl flex items-center justify-between">
-          <div>
-            <span className="text-[10px] text-slate-400 font-mono block">NETWORK LATENCY</span>
+        {/* Ping Card (Full width, real measured latency & direct route stability) */}
+        <div className="col-span-2 bg-[#071129]/90 border border-cyan-900/60 rounded-2xl p-3.5 shadow-xl flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <span className="text-[10px] text-slate-400 font-mono block">
+              NETWORK LATENCY · {networkDiagnostics.connectionType}{networkDiagnostics.wifiBand ? ` ${networkDiagnostics.wifiBand}` : ''}
+            </span>
             <div className="flex items-baseline space-x-1.5 mt-0.5">
-              <span className="font-orbitron font-extrabold text-2xl text-cyan-400">
-                {state.isOnline === false ? 'Offline' : `${activeRegion.currentPingMs}ms`}
+              <span className="font-orbitron font-extrabold text-2xl text-cyan-400 tabular-nums">
+                {state.isOnline === false
+                  ? 'Offline'
+                  : activePingMs > 0
+                  ? `${activePingMs}ms`
+                  : 'Probing...'}
               </span>
-              {state.isOnline !== false && (
+              {state.isOnline !== false && activePingMs > 0 && (
                 <span className={`text-[10px] font-mono font-bold ${activePingQuality.textColor}`}>
                   {activePingQuality.label}
                 </span>
               )}
             </div>
-            <span className="text-[10px] text-cyan-300 font-mono block mt-1">
-              Route: {activeRegion.name.split(' ')[0]} (±{networkDiagnostics.jitterMs}ms)
+            <span className="text-[10px] text-cyan-300 font-mono block mt-1 truncate">
+              {activeRegion.name} · Jitter ±{networkDiagnostics.jitterMs}ms · Stability {networkDiagnostics.stabilityPercent}%
             </span>
+            {networkDiagnostics.stabilityReason && (
+              <span className={`text-[9px] font-mono block mt-0.5 truncate ${
+                networkDiagnostics.stabilityStatus === 'vpn_overhead' ||
+                networkDiagnostics.stabilityStatus === 'unstable_wifi' ||
+                networkDiagnostics.stabilityStatus === 'unstable_mobile'
+                  ? 'text-amber-300'
+                  : networkDiagnostics.targetAchievable20to40
+                  ? 'text-emerald-300'
+                  : 'text-slate-400'
+              }`}>
+                {networkDiagnostics.stabilityReason}
+              </span>
+            )}
           </div>
           <div className="w-10 h-10 rounded-xl bg-cyan-950/80 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0">
             <Wifi className="w-5 h-5" />
@@ -530,6 +587,9 @@ export const GamingDashboard: React.FC = () => {
       {/* D3.js 30-Min Neon FPS Performance History Graph */}
       <PerformanceHistoryGraph />
 
+      {/* Real-Time Local Gaming Server WebSocket Ping Monitor */}
+      <WebSocketPingCard />
+
       {/* Server Status + Firewall Status Cards */}
       <div className="grid grid-cols-2 gap-2.5">
         <div className="bg-[#071129]/95 border border-cyan-900/60 rounded-2xl p-3 space-y-1">
@@ -559,19 +619,31 @@ export const GamingDashboard: React.FC = () => {
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-slate-400 font-mono flex items-center space-x-1">
               <Shield className="w-3.5 h-3.5 text-emerald-400" />
-              <span>VPN FIREWALL</span>
+              <span>VPN HEALTH</span>
             </span>
             <span className={`text-[9px] font-mono font-bold px-1.5 rounded ${
-              firewallState.enabled ? 'bg-emerald-950 text-emerald-300 border border-emerald-600/50' : 'bg-slate-800 text-slate-400'
+              firewallState.conflictDetected || firewallState.connectionState === 'ERROR'
+                ? 'bg-red-950 text-red-300 border border-red-500/60'
+                : firewallState.enabled
+                ? 'bg-emerald-950 text-emerald-300 border border-emerald-600/50'
+                : 'bg-slate-800 text-slate-400'
             }`}>
-              {firewallState.enabled ? 'ON' : 'OFF'}
+              {firewallState.isNativeAndroid
+                ? firewallState.connectionState
+                : firewallState.enabled
+                ? 'READY'
+                : 'OFF'}
             </span>
           </div>
-          <div className="font-orbitron font-bold text-xs text-white truncate">
-            {appsList.filter(a => a.isBlocked).length} Blocked • {formatBytesCompact(firewallState.blockedBytesTotal)}
+          <div className="font-orbitron font-bold text-xs text-white truncate tabular-nums">
+            {appsList.filter(a => a.isBlocked).length} Filtered · {formatBytesCompact(firewallState.blockedBytesTotal)}
           </div>
-          <p className="text-[9px] text-emerald-300/80 font-mono truncate">
-            Protected: {firewallState.protectedGameName}
+          <p className="text-[9px] text-emerald-300/80 font-mono truncate tabular-nums">
+            {firewallState.lastFailureReason
+              ? firewallState.lastFailureReason
+              : firewallState.isNativeAndroid && firewallState.persistentServiceRunning
+              ? `${firewallState.activeTransport} · HB #${firewallState.heartbeatCount ?? 0}${firewallState.wakeLockActive ? ' · WL' : ''} · TCP ${firewallState.blockedTcpPackets}`
+              : `${firewallState.activeTransport} · TCP ${firewallState.blockedTcpPackets} / DNS ${firewallState.blockedDnsQueries}`}
           </p>
         </div>
       </div>
@@ -638,50 +710,107 @@ export const GamingDashboard: React.FC = () => {
         )}
       </div>
 
-      {/* REAL-TIME PING MONITOR SECTION (NEW REAL NETWORK LATENCY TEST PROBE) */}
+      {/* REAL-TIME PING MONITOR & OPTIMIZATION ENGINE */}
       <div className="p-3.5 rounded-2xl bg-gradient-to-br from-[#041029] via-[#051433] to-[#020a1f] border-2 border-cyan-500/60 shadow-xl shadow-cyan-950/60 space-y-3">
         {/* Header */}
-        <div className="flex items-center justify-between pb-2 border-b border-cyan-900/60">
-          <div className="flex items-center space-x-2">
-            <div className="w-7 h-7 rounded-lg bg-cyan-500/20 border border-cyan-400/60 flex items-center justify-center text-cyan-400 shadow-sm">
-              <Globe2 className="w-4 h-4 animate-pulse" />
+        <div className="flex items-center justify-between gap-2 pb-2 border-b border-cyan-900/60">
+          <div className="flex items-center space-x-2 min-w-0">
+            <div className="w-7 h-7 rounded-lg bg-cyan-500/20 border border-cyan-400/60 flex items-center justify-center text-cyan-400 shadow-sm shrink-0">
+              <Globe2 className="w-4 h-4" />
             </div>
-            <div>
-              <h4 className="font-orbitron font-extrabold text-xs text-white uppercase tracking-wider flex items-center space-x-1.5">
-                <span>REAL-TIME PING MONITOR</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <div className="min-w-0">
+              <h4 className="font-orbitron font-extrabold text-xs text-white uppercase tracking-wider truncate">
+                REAL-TIME PING ENGINE
               </h4>
-              <p className="text-[10px] text-cyan-300/80 font-mono">
-                Live Server Latency Probe • {lastProbedTime}
+              <p className="text-[10px] text-cyan-300/80 font-mono truncate">
+                Measured 1-RTT · {lastProbedTime}
               </p>
             </div>
           </div>
 
-          {/* Test Ping & Speed Diagnostics Button */}
-          <button
-            type="button"
-            onClick={async () => {
-              await handleManualPingProbe();
-              await runFullNetworkDiagnostics();
-            }}
-            disabled={isProbing || networkDiagnostics.isMeasuringSpeed}
-            className="px-2.5 py-1.5 rounded-xl bg-cyan-500/20 border border-cyan-400 hover:bg-cyan-500/30 text-cyan-300 text-[10px] font-mono font-bold flex items-center space-x-1 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-            title="Probe Latency & Network Speed Diagnostics"
-          >
-            <RefreshCw className={`w-3 h-3 ${isProbing || networkDiagnostics.isMeasuringSpeed ? 'animate-spin' : ''}`} />
-            <span>{isProbing || networkDiagnostics.isMeasuringSpeed ? 'Testing...' : 'Test Net'}</span>
-          </button>
+          <div className="flex items-center space-x-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={async () => {
+                haptics.impactMedium();
+                sound.playClick();
+                await optimizeNetworkRoute('Manual Route Optimization');
+              }}
+              disabled={isProbing}
+              className="px-2.5 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/70 hover:bg-emerald-500/30 text-emerald-200 text-[10px] font-mono font-bold cursor-pointer disabled:opacity-50"
+              title="Find Best Non-VPN Direct Route & Quiet Background Traffic"
+            >
+              Optimize
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                await handleManualPingProbe();
+                await runFullNetworkDiagnostics();
+              }}
+              disabled={isProbing || networkDiagnostics.isMeasuringSpeed}
+              className="px-2.5 py-1.5 rounded-xl bg-cyan-500/20 border border-cyan-400 hover:bg-cyan-500/30 text-cyan-300 text-[10px] font-mono font-bold flex items-center space-x-1 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+              title="Probe Latency & Network Speed Diagnostics"
+            >
+              <RefreshCw className={`w-3 h-3 ${isProbing || networkDiagnostics.isMeasuringSpeed ? 'animate-spin' : ''}`} />
+              <span>{isProbing || networkDiagnostics.isMeasuringSpeed ? 'Testing...' : 'Test Net'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Direct Routing, Stability & 20-40ms Honesty Diagnostic Strip */}
+        <div
+          className={`p-2.5 rounded-xl border text-[10px] font-mono space-y-1 ${
+            networkDiagnostics.stabilityStatus === 'vpn_overhead' ||
+            networkDiagnostics.stabilityStatus === 'unstable_wifi' ||
+            networkDiagnostics.stabilityStatus === 'unstable_mobile' ||
+            networkDiagnostics.stabilityStatus === 'offline'
+              ? 'bg-amber-950/35 border-amber-500/60 text-amber-200'
+              : networkDiagnostics.targetAchievable20to40
+              ? 'bg-emerald-950/35 border-emerald-500/50 text-emerald-200'
+              : 'bg-[#030c1f] border-cyan-900/70 text-cyan-200'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-bold uppercase">
+              {networkDiagnostics.routingMode === 'EXTERNAL_VPN_HOP'
+                ? 'VPN Overhead Detected'
+                : networkDiagnostics.routingMode === 'GAME_EXCLUDED_BYPASS'
+                ? 'Direct Game Bypass (0ms VPN Hop)'
+                : 'Direct Physical Route (No VPN)'}
+            </span>
+            <button
+              type="button"
+              onClick={toggleAutoOptimizeNetwork}
+              className={`px-2 py-0.5 rounded border text-[9px] font-bold cursor-pointer ${
+                networkDiagnostics.autoOptimizeEnabled !== false
+                  ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300'
+                  : 'bg-slate-900 border-slate-700 text-slate-400'
+              }`}
+            >
+              Auto-Opt {networkDiagnostics.autoOptimizeEnabled !== false ? 'ON' : 'OFF'}
+            </button>
+          </div>
+          <p className="text-[10px] leading-snug">
+            {networkDiagnostics.stabilityReason ||
+              'Measuring real network latency & connection stability...'}
+          </p>
+          {networkDiagnostics.lastOptimizationAction && (
+            <p className="text-[9px] text-slate-300 truncate">
+              Last Action: {networkDiagnostics.lastOptimizationAction}
+            </p>
+          )}
         </div>
 
         {/* Measured Network Speed, Loss, Jitter & Stability Row */}
-        <div className="grid grid-cols-4 gap-1.5 text-center font-mono">
+        <div className="grid grid-cols-4 gap-1.5 text-center font-mono tabular-nums">
           <div className="bg-[#030c1f] border border-cyan-950 rounded-xl p-1.5">
             <span className="text-[8px] text-slate-400 flex items-center justify-center space-x-0.5">
               <ArrowDownCircle className="w-2.5 h-2.5 text-emerald-400" />
               <span>DOWN</span>
             </span>
             <span className="text-[11px] font-bold text-emerald-300 block">
-              {networkDiagnostics.downloadMbps}M
+              {networkDiagnostics.downloadMbps > 0 ? `${networkDiagnostics.downloadMbps}M` : '--'}
             </span>
           </div>
           <div className="bg-[#030c1f] border border-cyan-950 rounded-xl p-1.5">
@@ -690,7 +819,7 @@ export const GamingDashboard: React.FC = () => {
               <span>UP</span>
             </span>
             <span className="text-[11px] font-bold text-cyan-300 block">
-              {networkDiagnostics.uploadMbps}M
+              {networkDiagnostics.uploadMbps > 0 ? `${networkDiagnostics.uploadMbps}M` : '--'}
             </span>
           </div>
           <div className="bg-[#030c1f] border border-cyan-950 rounded-xl p-1.5">
@@ -701,7 +830,15 @@ export const GamingDashboard: React.FC = () => {
           </div>
           <div className="bg-[#030c1f] border border-cyan-950 rounded-xl p-1.5">
             <span className="text-[8px] text-slate-400 block">STABILITY</span>
-            <span className="text-[11px] font-bold text-emerald-400 block">
+            <span
+              className={`text-[11px] font-bold block ${
+                networkDiagnostics.stabilityPercent >= 80
+                  ? 'text-emerald-400'
+                  : networkDiagnostics.stabilityPercent >= 55
+                  ? 'text-amber-300'
+                  : 'text-red-400'
+              }`}
+            >
               {networkDiagnostics.stabilityPercent}%
             </span>
           </div>
@@ -711,7 +848,8 @@ export const GamingDashboard: React.FC = () => {
         <div className="space-y-2">
           {serverRegions.map((region) => {
             const isSelected = region.id === selectedRegionId;
-            const quality = getPingQuality(region.currentPingMs);
+            const reachable = region.reachable !== false && region.currentPingMs > 0;
+            const quality = getPingQuality(region.currentPingMs, reachable);
 
             return (
               <div
@@ -719,7 +857,11 @@ export const GamingDashboard: React.FC = () => {
                 onClick={() => {
                   sound.playClick();
                   selectPingRegion(region.id);
-                  setSnackBarMessage(`Active Route: ${region.name} (${region.currentPingMs}ms)`);
+                  setSnackBarMessage(
+                    reachable
+                      ? `Active Route: ${region.name} (${region.currentPingMs}ms)`
+                      : `${region.name} unreachable on current connection`
+                  );
                 }}
                 className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 cursor-pointer transition-all ${
                   isSelected
@@ -751,13 +893,13 @@ export const GamingDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="text-right shrink-0">
+                <div className="text-right shrink-0 tabular-nums">
                   <div className="leading-tight">
                     <span className={`font-orbitron font-extrabold text-xs px-2 py-0.5 rounded-lg border inline-block whitespace-nowrap ${quality.badgeClass}`}>
-                      {region.currentPingMs} ms
+                      {reachable ? `${region.currentPingMs} ms` : 'N/A'}
                     </span>
                     <span className={`text-[9px] font-mono font-bold block mt-0.5 whitespace-nowrap ${quality.textColor}`}>
-                      {quality.label} • ±{region.jitterMs}ms
+                      {reachable ? `${quality.label} • ±${region.jitterMs}ms` : `${region.packetLossPercent}% loss`}
                     </span>
                   </div>
                 </div>
@@ -766,13 +908,18 @@ export const GamingDashboard: React.FC = () => {
           })}
         </div>
 
-        {/* Selected Route Status Summary (Measured results only) */}
+        {/* Selected Route Status Summary (Actual Measured Results Only) */}
         <div className="p-2.5 rounded-xl bg-[#020817] border border-cyan-950 flex items-center justify-between gap-2 text-xs font-mono">
           <div className="flex items-center space-x-2 text-slate-300 min-w-0">
-            <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0" />
-            <span className="break-words">Measured Probe: <strong className="text-cyan-300">{activeRegion.name}</strong></span>
+            <Radio className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span className="break-words">
+              Actual Probe: <strong className="text-cyan-300">{activeRegion.name}</strong>
+              {typeof networkDiagnostics.wifiRssiDbm === 'number' && networkDiagnostics.wifiRssiDbm < 0
+                ? ` (${networkDiagnostics.wifiRssiDbm} dBm)`
+                : ''}
+            </span>
           </div>
-          <span className="text-[10px] text-emerald-400 font-bold bg-emerald-950/80 border border-emerald-800 px-2 py-0.5 rounded whitespace-nowrap shrink-0">
+          <span className="text-[10px] text-emerald-400 font-bold bg-emerald-950/80 border border-emerald-800 px-2 py-0.5 rounded whitespace-nowrap shrink-0 tabular-nums">
             {networkDiagnostics.packetLossPercent}% LOSS
           </span>
         </div>
@@ -802,14 +949,55 @@ export const GamingDashboard: React.FC = () => {
         </span>
       </div>
 
-      {/* Button: Stop Gaming Mode */}
+      {/* Navigation back to the single Master Boost ON/OFF Control */}
       <button
-        onClick={stopGamingMode}
-        className="w-full py-3.5 rounded-2xl bg-[#1f0814] border border-red-500/60 text-red-300 hover:text-white hover:bg-red-950/60 font-orbitron font-bold text-xs tracking-wider uppercase transition-all flex items-center justify-center space-x-2 cursor-pointer shadow-lg active:scale-98"
+        type="button"
+        onClick={() => {
+          haptics.impactLight();
+          sound.playClick();
+          setCurrentScreen('home');
+        }}
+        className="w-full min-h-[48px] py-3.5 rounded-2xl bg-[#071636] border border-cyan-500/60 text-cyan-200 hover:text-white hover:bg-cyan-950/60 font-orbitron font-bold text-xs tracking-wider uppercase transition-all flex items-center justify-center space-x-2 cursor-pointer shadow-lg active:scale-98"
       >
-        <Square className="w-4 h-4 fill-current" />
-        <span>Stop Gaming Mode</span>
+        <Zap className="w-4 h-4" />
+        <span>
+          {superBoost.status === 'active' || state.isBoosting
+            ? 'Open Master Boost ON/OFF Control'
+            : 'Return to Boost Control'}
+        </span>
       </button>
+
+      {/* Auto-Recovery & VPN Watchdog History */}
+      <div className="bg-[#050b1a] border border-cyan-950 rounded-2xl p-3 font-mono text-[10px] space-y-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-slate-300 font-bold uppercase tracking-wider">
+            Auto-Recovery &amp; VPN Watchdog
+          </span>
+          <span className="text-[9px] text-cyan-400 tabular-nums">
+            Reconnects: {firewallState.reconnectCount}
+          </span>
+        </div>
+        <div className="max-h-24 overflow-y-auto space-y-1">
+          {recoveryHistory.slice(0, 6).map((ev) => (
+            <div key={ev.id} className="flex items-start justify-between gap-2 text-slate-300">
+              <span
+                className={`truncate ${
+                  ev.severity === 'error'
+                    ? 'text-red-300'
+                    : ev.severity === 'warning'
+                    ? 'text-amber-300'
+                    : 'text-emerald-300'
+                }`}
+              >
+                [{ev.category.toUpperCase()}] {ev.message}
+              </span>
+              <span className="text-[9px] text-slate-500 shrink-0 tabular-nums">
+                {new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Live System Process Logs */}
       <div className="bg-[#050b1a] border border-cyan-950 rounded-2xl p-3 font-mono text-[10px] space-y-1">
@@ -835,7 +1023,7 @@ export const GamingDashboard: React.FC = () => {
             </div>
             <h3 className="font-orbitron font-bold text-sm text-white">Clear Temporary App Cache?</h3>
             <p className="text-[11px] text-slate-300 leading-relaxed">
-              Removes <strong className="text-cyan-300">{state.storage?.appTempCacheKb ?? 0} KB</strong> of temporary cache files inside FPS Booster only.
+              Removes <strong className="text-cyan-300">{state.storage?.appTempCacheKb ?? 0} KB</strong> of temporary cache files inside Global Game Booster only.
             </p>
             <div className="grid grid-cols-2 gap-2 pt-1">
               <button

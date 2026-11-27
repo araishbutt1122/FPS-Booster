@@ -1,9 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, lazy, Suspense } from 'react';
 import { 
-  Wifi, 
-  Battery, 
   Menu, 
-  Crown, 
   Activity, 
   Shield, 
   Rocket, 
@@ -11,22 +8,18 @@ import {
   X, 
   ChevronRight,
   Flame,
-  Volume2,
-  VolumeX,
   Languages,
   Smartphone,
-  Cpu,
   Clock,
-  CheckCircle2,
-  Gift,
-  Lock,
   KeyRound,
   Zap,
-  AlertTriangle
+  AlertTriangle,
+  Play
 } from 'lucide-react';
 import { useBooster } from '../context/BoosterContext.tsx';
 import { sound } from '../utils/audio.ts';
-import { AdminPanel } from './AdminPanel.tsx';
+import { haptics } from '../utils/haptics.ts';
+const AdminPanel = lazy(() => import('./AdminPanel.tsx').then((m) => ({ default: m.AdminPanel })));
 
 export const StatusBar: React.FC = () => {
   // Fake Status Bar completely removed for immersive full-screen mode
@@ -34,7 +27,7 @@ export const StatusBar: React.FC = () => {
 };
 
 export const TopAppBar: React.FC = () => {
-  const { currentScreen, setCurrentScreen, state, setLanguage, thermalMonitor, smartSession } = useBooster();
+  const { currentScreen, setCurrentScreen, state, masterBoostActive, setLanguage, thermalMonitor, smartSession } = useBooster();
   const isGamingHighTemp =
     thermalMonitor.isHighTempWarning ||
     ((state.isGamingModeOn || state.isBoosting || smartSession.isActive) &&
@@ -73,10 +66,10 @@ export const TopAppBar: React.FC = () => {
         return state.language === 'ur' ? 'Gaming Dashboard' : 'Gaming Dashboard';
       case 'settings':
         return state.language === 'ur' ? 'Settings' : 'Settings';
-      case 'premium':
-        return state.language === 'ur' ? 'Upgrade To PRO' : 'Premium Package';
       case 'reward_ad':
-        return state.language === 'ur' ? 'Free Boost Timers' : 'Free Boost Timers';
+        return state.language === 'ur' ? 'Ad Dekhein • Boost Time' : 'Watch Ad • Boost Time';
+      case 'privacy_policy':
+        return 'Privacy Policy';
       default:
         return '';
     }
@@ -109,6 +102,7 @@ export const TopAppBar: React.FC = () => {
         {isInnerScreen ? (
           <button 
             onClick={() => {
+              haptics.impactLight();
               sound.playClick();
               setCurrentScreen('home');
             }}
@@ -120,6 +114,7 @@ export const TopAppBar: React.FC = () => {
         ) : (
           <button
             onClick={() => {
+              haptics.impactLight();
               sound.playClick();
               setIsDrawerOpen(true);
             }}
@@ -137,6 +132,7 @@ export const TopAppBar: React.FC = () => {
             <button
               type="button"
               onClick={() => {
+                haptics.warning();
                 sound.playClick();
                 setCurrentScreen('dashboard');
               }}
@@ -151,29 +147,37 @@ export const TopAppBar: React.FC = () => {
               <span>{thermalMonitor.currentTempC.toFixed(0)}°C HOT</span>
             </button>
           )}
-          {state.isBoosting && state.boostTimeRemainingSec > 0 ? (
+          {state.boostTimeRemainingSec > 0 ? (
             <div 
               onClick={() => {
+                haptics.impactLight();
                 sound.playClick();
                 setCurrentScreen('reward_ad');
               }}
-              className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-cyan-950/90 border border-cyan-400/80 text-cyan-300 text-xs font-mono cursor-pointer hover:border-cyan-300 hover:bg-cyan-900/60 transition-all shadow-md shadow-cyan-950"
-              title="Boost Time Remaining"
+              className={`flex items-center space-x-1.5 px-3 py-1 rounded-full border text-xs font-mono cursor-pointer transition-all tabular-nums ${
+                masterBoostActive
+                  ? 'bg-emerald-950/90 border-emerald-400/80 text-emerald-300 hover:border-emerald-300 shadow-md shadow-emerald-950'
+                  : 'bg-cyan-950/90 border-cyan-500/70 text-cyan-300 hover:border-cyan-300'
+              }`}
+              title="Boost Countdown Remaining"
             >
-              <Clock className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-              <span className="font-bold">{formatTimer(state.boostTimeRemainingSec)} Boost Left</span>
+              <Clock className={`w-3.5 h-3.5 ${masterBoostActive ? 'text-emerald-400 animate-pulse' : 'text-cyan-400'}`} />
+              <span className="font-bold">
+                {formatTimer(state.boostTimeRemainingSec)} {masterBoostActive ? 'Boost ON' : 'Left'}
+              </span>
             </div>
           ) : (
             <div 
               onClick={() => {
+                haptics.impactLight();
                 sound.playClick();
-                setCurrentScreen('home');
+                setCurrentScreen('reward_ad');
               }}
-              className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-900/90 border border-slate-700 text-slate-300 text-xs font-mono cursor-pointer hover:border-cyan-500"
-              title="Tap to Boost"
+              className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-900/90 border border-amber-500/60 text-amber-300 text-xs font-mono cursor-pointer hover:border-amber-400"
+              title="Watch 1 Ad to Start Boost Time"
             >
-              <Zap className="w-3.5 h-3.5 text-amber-400" />
-              <span className="font-bold text-amber-300">{state.isPro ? 'PRO VIP 120' : 'Tap to Boost'}</span>
+              <Play className="w-3 h-3 text-amber-400 fill-amber-400" />
+              <span className="font-bold text-amber-300">Watch Ad (+30m)</span>
             </div>
           )}
         </div>
@@ -193,14 +197,14 @@ export const TopAppBar: React.FC = () => {
                 <div 
                   onClick={handleLogoTap}
                   className="flex items-center space-x-2 cursor-pointer select-none"
-                  title="FPS BOOSTER"
+                  title="GLOBAL GAME BOOSTER"
                 >
                   <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-700 flex items-center justify-center shadow-lg shadow-cyan-500/30">
                     <Rocket className="w-5 h-5 text-white" />
                   </div>
                   <div>
-                    <h3 className="font-orbitron font-bold text-sm text-white">FPS BOOSTER</h3>
-                    <p className="text-[10px] text-cyan-400 font-mono tracking-wider">PRO 120 EDITION</p>
+                    <h3 className="font-orbitron font-bold text-sm text-white">GLOBAL GAME BOOSTER</h3>
+                    <p className="text-[10px] text-cyan-400 font-mono tracking-wider">ALL-GAMES FREE EDITION</p>
                   </div>
                 </div>
                 <button 
@@ -214,13 +218,15 @@ export const TopAppBar: React.FC = () => {
               {/* Status Banner */}
               <div className="mt-4 p-3 rounded-xl bg-gradient-to-r from-cyan-950/60 to-blue-950/60 border border-cyan-800/40">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-slate-300 font-medium">Subscription</span>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${state.isPro ? 'bg-amber-400 text-black' : 'bg-slate-800 text-slate-300'}`}>
-                    {state.isPro ? `${state.proTier.toUpperCase()} VIP` : 'FREE VERSION'}
+                  <span className="text-xs text-slate-300 font-medium">Boost Session Timer</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tabular-nums ${state.boostTimeRemainingSec > 0 ? 'bg-emerald-400 text-black' : 'bg-slate-800 text-slate-300'}`}>
+                    {state.boostTimeRemainingSec > 0 ? formatTimer(state.boostTimeRemainingSec) : '00:00'}
                   </span>
                 </div>
                 <p className="text-[11px] text-cyan-300">
-                  {state.isPro ? 'All PRO profiles & VPN active' : 'Optimize best FPS • Free instant boost'}
+                  {state.boostTimeRemainingSec > 0
+                    ? `Countdown Active • ${state.totalAdsWatched ?? 0} Ads watched`
+                    : 'Watch Ad to Start (30–120 Min Boost)'}
                 </p>
               </div>
 
@@ -228,34 +234,22 @@ export const TopAppBar: React.FC = () => {
               <div className="mt-5 space-y-1">
                 <button
                   onClick={() => {
-                    setCurrentScreen('premium');
-                    setIsDrawerOpen(false);
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-amber-300 hover:bg-amber-950/30 transition-all font-medium text-xs border border-amber-500/20"
-                >
-                  <div className="flex items-center space-x-2.5">
-                    <Crown className="w-4 h-4 text-amber-400 fill-amber-400/20" />
-                    <span>Upgrade to PRO VIP</span>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-amber-400" />
-                </button>
-
-                <button
-                  onClick={() => {
+                    haptics.selection();
                     setCurrentScreen('reward_ad');
                     setIsDrawerOpen(false);
                   }}
-                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-slate-200 hover:bg-cyan-950/40 transition-all font-medium text-xs"
+                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-emerald-300 hover:bg-emerald-950/30 transition-all font-medium text-xs border border-emerald-500/25"
                 >
                   <div className="flex items-center space-x-2.5">
-                    <Zap className="w-4 h-4 text-emerald-400" />
-                    <span>Instant Boost Timers</span>
+                    <Play className="w-4 h-4 text-emerald-400 fill-emerald-400/20" />
+                    <span>Watch Ad • Earn Boost Time</span>
                   </div>
-                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">Free</span>
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono">+30m</span>
                 </button>
 
                 <button
                   onClick={() => {
+                    haptics.selection();
                     setCurrentScreen('fps_graphics');
                     setIsDrawerOpen(false);
                   }}
@@ -270,6 +264,7 @@ export const TopAppBar: React.FC = () => {
 
                 <button
                   onClick={() => {
+                    haptics.selection();
                     setCurrentScreen('block_apps');
                     setIsDrawerOpen(false);
                   }}
@@ -284,6 +279,7 @@ export const TopAppBar: React.FC = () => {
 
                 <button
                   onClick={() => {
+                    haptics.selection();
                     setCurrentScreen('dashboard');
                     setIsDrawerOpen(false);
                   }}
@@ -313,7 +309,7 @@ export const TopAppBar: React.FC = () => {
                 </div>
                 <div className="flex justify-between text-slate-300">
                   <span>Block VPN Firewall:</span>
-                  <span className="text-cyan-400 font-bold">{state.isVpnActive ? 'Active' : 'Standby'}</span>
+                  <span className="text-cyan-400 font-bold">{state.isVpnActive ? 'Active' : 'Ready'}</span>
                 </div>
               </div>
             </div>
@@ -342,7 +338,7 @@ export const TopAppBar: React.FC = () => {
               </div>
 
               <div className="text-[10px] text-center text-slate-500 font-mono pt-1">
-                FPS BOOSTER PRO 120 • v2.4 PRO
+                GLOBAL GAME BOOSTER • 100% Free Edition
               </div>
             </div>
           </div>
@@ -357,7 +353,7 @@ export const TopAppBar: React.FC = () => {
               <KeyRound className="w-6 h-6" />
             </div>
             <h3 className="font-orbitron font-bold text-sm text-white">Admin Security Access</h3>
-            <p className="text-[11px] text-slate-300">Enter Admin PIN to open Order Approvals &amp; Wallet</p>
+            <p className="text-[11px] text-slate-300">Enter Admin PIN to open Diagnostics &amp; Cloud Portal</p>
 
             <form onSubmit={handleVerifyPin} className="space-y-3">
               <input
@@ -393,7 +389,11 @@ export const TopAppBar: React.FC = () => {
       )}
 
       {/* Hidden Admin Portal */}
-      {isAdminOpen && <AdminPanel onClose={() => setIsAdminOpen(false)} />}
+      {isAdminOpen && (
+        <Suspense fallback={null}>
+          <AdminPanel onClose={() => setIsAdminOpen(false)} />
+        </Suspense>
+      )}
     </>
   );
 };
@@ -447,6 +447,7 @@ export const BottomNavBar: React.FC = () => {
           {/* 1. Monitor */}
           <button
             onClick={() => {
+              haptics.selection();
               sound.playClick();
               setCurrentScreen('dashboard');
             }}
@@ -475,6 +476,7 @@ export const BottomNavBar: React.FC = () => {
           {/* 2. Block Apps */}
           <button
             onClick={() => {
+              haptics.selection();
               sound.playClick();
               setCurrentScreen('block_apps');
             }}
@@ -491,42 +493,41 @@ export const BottomNavBar: React.FC = () => {
           {/* 3. Boost */}
           <button
             onClick={() => {
+              haptics.impactMedium();
               sound.playBoost();
               setCurrentScreen('home');
             }}
-            className="flex flex-col items-center justify-center -my-3 px-2 z-10 transition-all cursor-pointer group shrink-0"
-          >
-            <div className={`w-12 h-12 rounded-full bg-gradient-to-tr from-cyan-500 via-blue-600 to-cyan-400 flex items-center justify-center shadow-[0_0_20px_rgba(0,191,255,0.85)] border-2 ${
-              currentScreen === 'home' ? 'border-cyan-200 ring-2 ring-cyan-400 scale-105' : 'border-cyan-300'
-            } group-hover:scale-105 transition-transform`}>
-              <Rocket className="w-6 h-6 text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]" />
-            </div>
-            <span className={`text-[10px] font-orbitron font-bold tracking-wider mt-1 whitespace-nowrap drop-shadow-[0_0_6px_rgba(0,191,255,0.8)] ${
-              currentScreen === 'home' ? 'text-cyan-200' : 'text-cyan-400'
-            }`}>
-              Boost
-            </span>
-          </button>
-
-          {/* 4. PRO */}
-          <button
-            onClick={() => {
-              sound.playClick();
-              setCurrentScreen('premium');
-            }}
             className={`flex-1 min-h-[44px] flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition-all cursor-pointer ${
-              currentScreen === 'premium' 
-                ? 'bg-amber-500/15 text-amber-300 border border-amber-400/50 drop-shadow-[0_0_8px_rgba(255,193,7,0.8)]' 
-                : 'text-amber-400/80 hover:text-amber-300'
+              currentScreen === 'home'
+                ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/60 drop-shadow-[0_0_8px_rgba(0,191,255,0.75)]'
+                : 'text-cyan-400 hover:text-cyan-200'
             }`}
           >
-            <Crown className="w-5 h-5 mb-0.5 text-[#FFC107] fill-[#FFC107]/20 shrink-0" />
-            <span className="text-[10px] font-bold text-[#FFC107] tracking-tight whitespace-nowrap">PRO</span>
+            <Rocket className="w-5 h-5 mb-0.5 shrink-0" />
+            <span className="text-[10px] font-medium tracking-tight whitespace-nowrap">Boost</span>
+          </button>
+
+          {/* 4. Ad Time */}
+          <button
+            onClick={() => {
+              haptics.selection();
+              sound.playClick();
+              setCurrentScreen('reward_ad');
+            }}
+            className={`flex-1 min-h-[44px] flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition-all cursor-pointer ${
+              currentScreen === 'reward_ad' 
+                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-400/50 drop-shadow-[0_0_8px_rgba(16,185,129,0.7)]' 
+                : 'text-emerald-400/80 hover:text-emerald-300'
+            }`}
+          >
+            <Clock className="w-5 h-5 mb-0.5 shrink-0" />
+            <span className="text-[10px] font-bold tracking-tight whitespace-nowrap">Ad Time</span>
           </button>
 
           {/* 5. Settings */}
           <button
             onClick={() => {
+              haptics.selection();
               sound.playClick();
               setCurrentScreen('settings');
             }}
@@ -555,7 +556,7 @@ export const BottomNavBar: React.FC = () => {
               <KeyRound className="w-6 h-6" />
             </div>
             <h3 className="font-orbitron font-bold text-sm text-white">Admin Security Access</h3>
-            <p className="text-[11px] text-slate-300">Enter Admin PIN to open Order Approvals &amp; Wallet</p>
+            <p className="text-[11px] text-slate-300">Enter Admin PIN to open Diagnostics &amp; Cloud Portal</p>
 
             <form onSubmit={handleVerifyPin} className="space-y-3">
               <input
@@ -591,7 +592,11 @@ export const BottomNavBar: React.FC = () => {
       )}
 
       {/* Hidden Admin Portal */}
-      {isAdminOpen && <AdminPanel onClose={() => setIsAdminOpen(false)} />}
+      {isAdminOpen && (
+        <Suspense fallback={null}>
+          <AdminPanel onClose={() => setIsAdminOpen(false)} />
+        </Suspense>
+      )}
     </>
   );
 };

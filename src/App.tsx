@@ -1,14 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { BoosterProvider, useBooster } from './context/BoosterContext.tsx';
 import { TopAppBar, BottomNavBar } from './components/Navigation.tsx';
 import { HomeScreen } from './components/HomeScreen.tsx';
-import { FpsGraphicsScreen } from './components/FpsGraphicsScreen.tsx';
-import { BlockAppsScreen } from './components/BlockAppsScreen.tsx';
-import { GamingDashboard } from './components/GamingDashboard.tsx';
-import { SettingsScreen } from './components/SettingsScreen.tsx';
-import { PremiumPackageScreen } from './components/PremiumPackageScreen.tsx';
-import { RewardAdScreen } from './components/RewardAdScreen.tsx';
-import { PrivacyPolicyScreen } from './components/PrivacyPolicyScreen.tsx';
+
+const FpsGraphicsScreen = lazy(() =>
+  import('./components/FpsGraphicsScreen.tsx').then((m) => ({ default: m.FpsGraphicsScreen }))
+);
+const BlockAppsScreen = lazy(() =>
+  import('./components/BlockAppsScreen.tsx').then((m) => ({ default: m.BlockAppsScreen }))
+);
+const GamingDashboard = lazy(() =>
+  import('./components/GamingDashboard.tsx').then((m) => ({ default: m.GamingDashboard }))
+);
+const SettingsScreen = lazy(() =>
+  import('./components/SettingsScreen.tsx').then((m) => ({ default: m.SettingsScreen }))
+);
+const RewardAdScreen = lazy(() =>
+  import('./components/RewardAdScreen.tsx').then((m) => ({ default: m.RewardAdScreen }))
+);
+const PrivacyPolicyScreen = lazy(() =>
+  import('./components/PrivacyPolicyScreen.tsx').then((m) => ({ default: m.PrivacyPolicyScreen }))
+);
 import {
   Smartphone, 
   Crown, 
@@ -20,6 +32,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { sound } from './utils/audio.ts';
+import { haptics } from './utils/haptics.ts';
 import { reportCrashToFirestore, auth } from './utils/firebase.ts';
 
 class AppErrorBoundary extends React.Component<
@@ -80,17 +93,19 @@ class AppErrorBoundary extends React.Component<
 const MainAppContent: React.FC = () => {
   const { currentScreen, setCurrentScreen, state, logCrashDiagnostic } = useBooster();
   const [deviceFrame, setDeviceFrame] = useState(true);
+  const currentScreenRef = useRef(currentScreen);
+  currentScreenRef.current = currentScreen;
 
   useEffect(() => {
     const onWindowError = (event: ErrorEvent) => {
       if (!event?.message) return;
-      logCrashDiagnostic(event.message, event.error?.stack, currentScreen);
+      logCrashDiagnostic(event.message, event.error?.stack, currentScreenRef.current);
     };
     const onUnhandledRejection = (event: PromiseRejectionEvent) => {
       const reason =
         event.reason instanceof Error ? event.reason.message : String(event.reason || 'Unhandled Rejection');
       if (reason.includes('permission-denied')) return;
-      logCrashDiagnostic(reason, event.reason?.stack, currentScreen);
+      logCrashDiagnostic(reason, event.reason?.stack, currentScreenRef.current);
     };
     window.addEventListener('error', onWindowError);
     window.addEventListener('unhandledrejection', onUnhandledRejection);
@@ -98,7 +113,7 @@ const MainAppContent: React.FC = () => {
       window.removeEventListener('error', onWindowError);
       window.removeEventListener('unhandledrejection', onUnhandledRejection);
     };
-  }, [currentScreen]);
+  }, []);
 
   const renderActiveScreen = () => {
     switch (currentScreen) {
@@ -112,8 +127,6 @@ const MainAppContent: React.FC = () => {
         return <GamingDashboard />;
       case 'settings':
         return <SettingsScreen />;
-      case 'premium':
-        return <PremiumPackageScreen />;
       case 'reward_ad':
         return <RewardAdScreen />;
       case 'privacy_policy':
@@ -137,7 +150,7 @@ const MainAppContent: React.FC = () => {
             <Zap className="w-3.5 h-3.5" />
           </div>
           <span className="font-orbitron font-extrabold text-sm tracking-wide text-white">
-            FPS BOOSTER PRO 120
+            GLOBAL GAME BOOSTER
           </span>
           <span className="text-[10px] bg-cyan-950 text-cyan-400 border border-cyan-800 px-2 py-0.5 rounded font-mono">
             {state.maxHardwareHz}Hz VSYNC
@@ -147,7 +160,7 @@ const MainAppContent: React.FC = () => {
         {/* Quick Screen Switcher */}
         <div className="flex items-center space-x-1 bg-slate-900/90 border border-cyan-900/60 p-1 rounded-xl shadow-lg">
           <button
-            onClick={() => { sound.playClick(); setCurrentScreen('home'); }}
+            onClick={() => { haptics.selection(); sound.playClick(); setCurrentScreen('home'); }}
             className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-all ${
               currentScreen === 'home' ? 'bg-cyan-500 text-black font-bold' : 'text-slate-400 hover:text-white'
             }`}
@@ -155,7 +168,7 @@ const MainAppContent: React.FC = () => {
             1. Home
           </button>
           <button
-            onClick={() => { sound.playClick(); setCurrentScreen('fps_graphics'); }}
+            onClick={() => { haptics.selection(); sound.playClick(); setCurrentScreen('fps_graphics'); }}
             className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-all ${
               currentScreen === 'fps_graphics' ? 'bg-cyan-500 text-black font-bold' : 'text-slate-400 hover:text-white'
             }`}
@@ -163,7 +176,7 @@ const MainAppContent: React.FC = () => {
             2. FPS &amp; GFX
           </button>
           <button
-            onClick={() => { sound.playClick(); setCurrentScreen('block_apps'); }}
+            onClick={() => { haptics.selection(); sound.playClick(); setCurrentScreen('block_apps'); }}
             className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-all ${
               currentScreen === 'block_apps' ? 'bg-cyan-500 text-black font-bold' : 'text-slate-400 hover:text-white'
             }`}
@@ -171,7 +184,7 @@ const MainAppContent: React.FC = () => {
             3. Block Apps
           </button>
           <button
-            onClick={() => { sound.playClick(); setCurrentScreen('dashboard'); }}
+            onClick={() => { haptics.selection(); sound.playClick(); setCurrentScreen('dashboard'); }}
             className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-all ${
               currentScreen === 'dashboard' ? 'bg-cyan-500 text-black font-bold' : 'text-slate-400 hover:text-white'
             }`}
@@ -179,7 +192,7 @@ const MainAppContent: React.FC = () => {
             4. Dashboard
           </button>
           <button
-            onClick={() => { sound.playClick(); setCurrentScreen('settings'); }}
+            onClick={() => { haptics.selection(); sound.playClick(); setCurrentScreen('settings'); }}
             className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-all ${
               currentScreen === 'settings' ? 'bg-cyan-500 text-black font-bold' : 'text-slate-400 hover:text-white'
             }`}
@@ -187,25 +200,17 @@ const MainAppContent: React.FC = () => {
             5. Settings
           </button>
           <button
-            onClick={() => { sound.playClick(); setCurrentScreen('premium'); }}
+            onClick={() => { haptics.selection(); sound.playClick(); setCurrentScreen('reward_ad'); }}
             className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-all ${
-              currentScreen === 'premium' ? 'bg-amber-400 text-black font-bold' : 'text-amber-400/80 hover:text-amber-300'
+              currentScreen === 'reward_ad' ? 'bg-emerald-400 text-black font-bold' : 'text-emerald-300/80 hover:text-emerald-200'
             }`}
           >
-            6. Pro VIP
-          </button>
-          <button
-            onClick={() => { sound.playClick(); setCurrentScreen('reward_ad'); }}
-            className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-all ${
-              currentScreen === 'reward_ad' ? 'bg-pink-500 text-white font-bold' : 'text-pink-400/80 hover:text-pink-300'
-            }`}
-          >
-            7. Free Boost
+            6. Ad Time
           </button>
 
           {/* Toggle Device Frame / Fullscreen view */}
           <button
-            onClick={() => setDeviceFrame(!deviceFrame)}
+            onClick={() => { haptics.impactLight(); setDeviceFrame(!deviceFrame); }}
             className="p-1.5 text-slate-400 hover:text-cyan-300 ml-1 rounded-lg hover:bg-slate-800"
             title={deviceFrame ? 'Expand to Fullscreen' : 'Show Phone Chassis'}
           >
@@ -216,6 +221,8 @@ const MainAppContent: React.FC = () => {
 
       {/* Main Container / Mobile Chassis */}
       <main className={`relative z-10 w-full transition-all duration-300 flex flex-col ${
+        state.batterySaverMode ? 'brightness-[0.78]' : 'brightness-100'
+      } ${
         deviceFrame 
           ? 'max-w-[420px] h-[100dvh] sm:h-[840px] sm:max-h-[92vh] sm:rounded-[42px] sm:border-[8px] sm:border-[#141b2e] sm:shadow-[0_0_50px_rgba(0,191,255,0.25),0_0_100px_rgba(0,0,0,0.9)] overflow-hidden bg-[#050A1A]' 
           : 'max-w-md h-[100dvh] bg-[#050A1A]'
@@ -230,7 +237,15 @@ const MainAppContent: React.FC = () => {
 
         {/* Dynamic Screen View */}
         <div className="flex-1 flex flex-col overflow-hidden relative">
-          {renderActiveScreen()}
+          <Suspense
+            fallback={
+              <div className="flex-1 flex items-center justify-center text-xs font-mono text-cyan-400">
+                Loading module...
+              </div>
+            }
+          >
+            {renderActiveScreen()}
+          </Suspense>
         </div>
 
         {/* Bottom Nav Bar (Monitor, Block Apps, Boost, PRO, Settings) */}
@@ -256,7 +271,7 @@ const MainAppContent: React.FC = () => {
         <span>•</span>
         <span className="flex items-center space-x-1 text-amber-400">
           <Crown className="w-3 h-3" />
-          <span>VIP Esports Performance • Instant Free Boost</span>
+          <span>Ad-Earned Boost Time • 100% Free Edition</span>
         </span>
       </footer>
     </div>

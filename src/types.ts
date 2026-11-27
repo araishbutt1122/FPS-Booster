@@ -4,16 +4,24 @@ export type ScreenType =
   | 'block_apps' 
   | 'dashboard' 
   | 'settings' 
-  | 'premium' 
   | 'reward_ad'
   | 'admin'
   | 'privacy_policy';
 
-export type FPSMode = '60' | '90' | '120';
+export type FPSMode = '30' | '45' | '60' | '90' | '120' | 'higher';
+
+export type FpsTierKey = '60' | '90' | '120';
+
+export interface FpsUnlockStatus {
+  unlocked: boolean;
+  unlockedAtMs: number | null;
+  expiresAtMs: number | null;
+  adsWatched: number;
+}
 
 export type Language = 'en' | 'ur';
 
-// STRICTLY 3 METHODS ONLY AS REQUESTED: JazzCash, Easypaisa, Binance
+// Legacy compatibility type
 export type PaymentMethodType = 'jazzcash' | 'easypaisa' | 'binance';
 
 export interface AppBlockItem {
@@ -24,6 +32,10 @@ export interface AppBlockItem {
   isBlocked: boolean;
   blockedDataMb: number;
   iconName: string;
+  iconDataUrl?: string;
+  isSystem?: boolean;
+  isGame?: boolean;
+  source?: 'android_installed' | 'catalog';
 }
 
 export interface GameItem {
@@ -32,6 +44,12 @@ export interface GameItem {
   packageName: string;
   genre: string;
   iconColor: string;
+  category?: string;
+  iconDataUrl?: string;
+  source?: 'android_installed' | 'catalog';
+  isInstalled?: boolean;
+  isFavorite?: boolean;
+  lastPlayedAt?: number;
 }
 
 export interface ProPackage {
@@ -108,11 +126,21 @@ export type OptimizationProfileMode =
 
 export type FirewallPresetMode = 'esports_strict' | 'social_keep' | 'custom';
 
+export type VpnConnectionState =
+  | 'READY'
+  | 'DISCONNECTED'
+  | 'CONNECTING'
+  | 'CONNECTED'
+  | 'RECONNECTING'
+  | 'STANDBY'
+  | 'ERROR';
+
 export interface FpsHistoryPoint {
   timestamp: number;
   fps: number;
   targetFps: number;
   profile: OptimizationProfileMode;
+  sessionActive?: boolean;
 }
 
 export interface CloudRemoteConfig {
@@ -151,15 +179,90 @@ export interface CloudBackendState {
 export interface FirewallState {
   enabled: boolean;
   hasVpnPermission: boolean;
+  notificationPermissionGranted?: boolean;
   isNativeAndroid: boolean;
+  connectionState: VpnConnectionState;
+  activeTransport: string;
+  reconnectCount: number;
+  lastFailureReason: string;
+  conflictDetected: boolean;
+  uptimeSec: number;
+  vpnLayer?: number;
+  firewallLayer?: number;
+  layerStatusNote?: string;
+  dnsFilterEnabled: boolean;
+  blockAllNonSelected?: boolean;
   preset: FirewallPresetMode;
   protectedGamePkg: string;
   protectedGameName: string;
   blockedBytesTotal: number;
   blockedPacketsCount: number;
+  blockedTcpPackets: number;
+  blockedUdpPackets: number;
+  blockedDnsQueries: number;
+  blockedIpv4Packets: number;
+  blockedIpv6Packets: number;
+  persistentServiceRunning?: boolean;
+  wakeLockActive?: boolean;
+  heartbeatCount?: number;
+  lastHeartbeatAt?: number;
   hasPreviousSnapshot: boolean;
   previousSnapshotBlockedIds: string[] | null;
   previousSnapshotEnabled: boolean | null;
+}
+
+export interface SuperBoostProgressState {
+  status: 'idle' | 'activating' | 'active' | 'stopping';
+  currentStepIndex: number;
+  currentStepLabel: string;
+  completedSteps: number[];
+  startedAt: number | null;
+  selectedGamePackage: string;
+  selectedGameName: string;
+  errorMessage: string | null;
+}
+
+export type PermissionFlowStep = 'battery' | 'usage' | 'dnd' | 'vpn';
+
+export interface PermissionChecklistState {
+  batteryOptimizationIgnored: boolean;
+  usageAccessGranted: boolean;
+  dndAccessGranted: boolean;
+  notificationGranted: boolean;
+  vpnGranted: boolean;
+  onboarded: boolean;
+}
+
+export interface BoostSessionSummary {
+  protectedGameName: string;
+  protectedGamePackage: string;
+  profileId: OptimizationProfileMode;
+  profileName: string;
+  targetFps: FPSMode;
+  maxHardwareHz: number;
+  vpnConnectionState: VpnConnectionState;
+  vpnTransport: string;
+  vpnActive: boolean;
+  isNativeAndroid: boolean;
+  persistentServiceActive: boolean;
+  blockedAppsCount: number;
+  blockedAppNames: string[];
+  dnsFilterEnabled: boolean;
+  dndActive: boolean;
+  gamingModeActive: boolean;
+  ramFreedMb: number;
+  ramUsagePercent: number;
+  trimmedBackgroundCount: number;
+  durationMinutes: number;
+  startedAt: number;
+}
+
+export interface RecoveryLogItem {
+  id: string;
+  timestamp: number;
+  category: 'vpn' | 'thermal' | 'network' | 'session';
+  severity: 'info' | 'warning' | 'error';
+  message: string;
 }
 
 export interface DisplayHardwareInfo {
@@ -195,6 +298,26 @@ export interface DeviceCapabilitiesState {
   vpnFirewallSupported: boolean;
 }
 
+export type ConnectionStabilityStatus =
+  | 'optimal'
+  | 'good'
+  | 'unstable_wifi'
+  | 'unstable_mobile'
+  | 'vpn_overhead'
+  | 'high_latency'
+  | 'offline';
+
+export type NetworkQualityLevel = 'green' | 'yellow' | 'red';
+
+export interface PingHistoryPoint {
+  timestamp: number;
+  pingMs: number;
+  jitterMs: number;
+  packetLossPercent: number;
+  quality: NetworkQualityLevel;
+  source: 'websocket' | 'native' | 'http';
+}
+
 export interface NetworkDiagnosticsState {
   pingMs: number;
   jitterMs: number;
@@ -205,6 +328,19 @@ export interface NetworkDiagnosticsState {
   connectionType: string;
   isMeasuringSpeed: boolean;
   lastDiagnosticsAt: number | null;
+  stabilityStatus?: ConnectionStabilityStatus;
+  stabilityReason?: string;
+  vpnOverheadDetected?: boolean;
+  routingMode?: 'DIRECT_PHYSICAL' | 'GAME_EXCLUDED_BYPASS' | 'EXTERNAL_VPN_HOP';
+  targetAchievable20to40?: boolean;
+  wifiRssiDbm?: number;
+  wifiLinkMbps?: number;
+  wifiBand?: '5GHz' | '2.4GHz' | '6GHz' | null;
+  autoOptimizeEnabled?: boolean;
+  lastOptimizedAt?: number | null;
+  lastOptimizationAction?: string | null;
+  isRouteLocked?: boolean;
+  fastDnsServer?: string;
 }
 
 export interface SmartSessionState {
@@ -333,8 +469,11 @@ export interface BoosterState {
   isOnline?: boolean;
   storage?: StorageStatsState;
   isBoosting: boolean;
+  boostExpiresAtMs?: number | null;
+  activeSessionStartedAtMs?: number | null;
   boostTimeRemainingSec: number;
   boostDurationTotalSec: number;
+  fpsUnlocks?: Record<FpsTierKey, FpsUnlockStatus>;
   isPro: boolean;
   proTier: 'free' | 'day' | 'week' | 'month' | 'vip' | '90day';
   proExpiresAt: number | null;
@@ -349,6 +488,9 @@ export interface BoosterState {
   networkOptimizer: boolean;
   appLock: boolean;
   soundAndHaptics: boolean;
+  batterySaverMode?: boolean;
+  selectedBoostMinutes?: number;
+  totalAdsWatched?: number;
   language: Language;
   thermalAlertThresholdC?: number;
   autoCoolOnHighTemp?: boolean;

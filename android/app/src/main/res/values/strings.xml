@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">FPS Booster Pro 120</string>
-    <string name="title_activity_main">FPS Booster Pro 120</string>
+    <string name="app_name">Global Game Booster</string>
+    <string name="title_activity_main">Global Game Booster</string>
     <string name="package_name">com.fpsbooster.pro</string>
     <string name="custom_url_scheme">com.fpsbooster.pro</string>
 </resources>

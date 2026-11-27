@@ -31,10 +31,10 @@ export const PrivacyPolicyScreen: React.FC = () => {
         <div>
           <h2 className="font-orbitron font-extrabold text-sm text-white flex items-center space-x-1.5">
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>Privacy Policy - FPS Booster</span>
+            <span>Privacy Policy - Global Game Booster</span>
           </h2>
           <p className="text-[10px] text-slate-400 font-mono">
-            Last Updated: 9 Nov 2026 • v2.4 PRO
+            Last Updated: 26 Nov 2026 • All-Games Free Edition
           </p>
         </div>
       </div>
@@ -45,28 +45,28 @@ export const PrivacyPolicyScreen: React.FC = () => {
         {/* Intro */}
         <div className="p-3 rounded-xl bg-[#040e26] border border-cyan-800/40 text-slate-300">
           <p className="text-[12px] font-medium text-cyan-200">
-            FPS Booster respects your privacy. This app does not collect your personal photos, contacts, or messages.
+            Global Game Booster (FPS Booster Engine) respects your privacy. This app does not collect your personal photos, contacts, or messages.
           </p>
         </div>
 
-        {/* Section 1: What We Collect */}
+        {/* Section 1: Local Data & Diagnostics */}
         <div className="space-y-1.5">
           <h3 className="font-orbitron font-bold text-xs text-emerald-400 flex items-center space-x-1.5">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>What We Collect:</span>
+            <span>What Stays On Your Device:</span>
           </h3>
           <ul className="space-y-1.5 pl-2 font-medium text-slate-300 text-[11px]">
             <li className="flex items-start space-x-2">
               <span className="text-cyan-400 font-bold">1.</span>
-              <span><strong>Name &amp; Payment TID</strong> - Only to verify your PRO payment.</span>
+              <span><strong>Boost Time &amp; Game Profiles</strong> - Stored locally to remember your ad-earned boost timer and per-game FPS presets.</span>
             </li>
             <li className="flex items-start space-x-2">
               <span className="text-cyan-400 font-bold">2.</span>
-              <span><strong>Payment Screenshot</strong> - Only to confirm your JazzCash / Easypaisa / Binance payment.</span>
+              <span><strong>Local VPN Firewall Rules</strong> - Filtered apps and DNS settings stay on your phone; traffic is not routed to external proxy servers.</span>
             </li>
             <li className="flex items-start space-x-2">
               <span className="text-cyan-400 font-bold">3.</span>
-              <span><strong>Device Info</strong> - Only to improve FPS Boost performance.</span>
+              <span><strong>Device Telemetry</strong> - Display refresh rate, RAM, battery temperature, and latency probes used only to optimize stability.</span>
             </li>
           </ul>
         </div>
@@ -75,21 +75,21 @@ export const PrivacyPolicyScreen: React.FC = () => {
         <div className="space-y-1.5 pt-2 border-t border-cyan-950">
           <h3 className="font-orbitron font-bold text-xs text-red-400 flex items-center space-x-1.5">
             <Lock className="w-3.5 h-3.5 text-red-400" />
-            <span>What We DON'T Collect:</span>
+            <span>What We DON&apos;T Collect:</span>
           </h3>
           <p className="text-[11px] text-slate-300 pl-2">
-            We do <strong>NOT</strong> collect your Bank Details, Passwords, or JazzCash PIN.
+            We do <strong>NOT</strong> collect banking details, passwords, private messages, or personal files.
           </p>
         </div>
 
-        {/* Section 3: Payments */}
+        {/* Section 3: Free Access Model */}
         <div className="space-y-1.5 pt-2 border-t border-cyan-950">
           <h3 className="font-orbitron font-bold text-xs text-amber-400 flex items-center space-x-1.5">
             <FileText className="w-3.5 h-3.5 text-amber-400" />
-            <span>Payments:</span>
+            <span>100% Free Ad-Earned Boost:</span>
           </h3>
           <p className="text-[11px] text-slate-300 pl-2">
-            All payments are done via JazzCash, Easypaisa, Binance Pay. We do not store your account passwords.
+            All FPS tuning, ping stabilization, and local background data blocking features are unlocked free by watching short rewarded ads.
           </p>
         </div>
 
@@ -112,7 +112,7 @@ export const PrivacyPolicyScreen: React.FC = () => {
 
         {/* Owner */}
         <div className="pt-2 border-t border-cyan-950 flex items-center justify-between text-[11px] font-mono text-slate-400">
-          <span>Owner: <strong className="text-white">FPS Booster Team</strong></span>
+          <span>Owner: <strong className="text-white">Global Game Booster Team</strong></span>
           <span className="text-[10px] bg-cyan-950 text-cyan-400 border border-cyan-800 px-2 py-0.5 rounded">
             Verified
           </span>

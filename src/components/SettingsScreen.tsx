@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { 
   Shield, 
   Rocket, 
@@ -7,25 +7,29 @@ import {
   Lock, 
   Volume2, 
   VolumeX, 
-  Tv, 
   Languages, 
-  Crown, 
-  Info, 
+  Clock, 
   Smartphone, 
   Trash2, 
   CheckCircle2,
   Cloud,
   RefreshCw,
-  FileBarChart2
+  FileBarChart2,
+  BatteryCharging
 } from 'lucide-react';
 import { useBooster } from '../context/BoosterContext.tsx';
 import { sound } from '../utils/audio.ts';
-import { AdminPanel } from './AdminPanel.tsx';
+import { haptics } from '../utils/haptics.ts';
+
+const AdminPanel = lazy(() =>
+  import('./AdminPanel.tsx').then((m) => ({ default: m.AdminPanel }))
+);
 
 export const SettingsScreen: React.FC = () => {
   const { 
     state, 
     updateSetting, 
+    toggleBatterySaver,
     setCurrentScreen, 
     setLanguage,
     cloudBackend,
@@ -108,76 +112,93 @@ export const SettingsScreen: React.FC = () => {
         </div>
       )}
 
-      {/* PRO Status Header Card */}
+      {/* Ad-Earned Boost Timer Header Card */}
       <div 
         onClick={() => {
           sound.playClick();
-          setCurrentScreen('premium');
+          setCurrentScreen('reward_ad');
         }}
-        className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
-          state.isPro 
-            ? 'bg-gradient-to-r from-amber-950/60 via-yellow-950/40 to-black border-amber-500/50 shadow-lg shadow-amber-950/50' 
-            : 'bg-gradient-to-r from-[#071333] via-[#091b48] to-[#040e24] border-cyan-800/60 shadow-lg'
-        }`}
+        className="p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 bg-gradient-to-r from-[#071a2f] via-[#062426] to-[#040e24] border-emerald-500/45 shadow-lg"
       >
         <div className="flex items-center space-x-3 min-w-0 flex-1">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-400 to-yellow-600 flex items-center justify-center text-black shadow-md shadow-amber-400/40 shrink-0">
-            <Crown className="w-6 h-6 fill-current" />
+          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center text-black shadow-md shadow-emerald-500/30 shrink-0">
+            <Clock className="w-6 h-6" />
           </div>
           <div className="min-w-0">
             <div className="flex items-center flex-wrap gap-1.5">
               <h3 className="font-orbitron font-extrabold text-sm text-white">
-                {state.isPro ? 'PRO VIP MEMBER' : (isUr ? 'PRO Upgrade Karein' : 'Upgrade to PRO')}
+                {isUr ? 'Ad-Earned Boost Timer' : 'Ad-Earned Boost Timer'}
               </h3>
-              <span className="text-[10px] bg-amber-400 text-black px-1.5 py-0.5 rounded font-mono font-bold whitespace-nowrap">
-                {state.isPro ? state.proTier.toUpperCase() : 'VIP'}
+              <span className="text-[10px] bg-emerald-400 text-black px-1.5 py-0.5 rounded font-mono font-bold whitespace-nowrap tabular-nums">
+                {Math.floor((state.boostTimeRemainingSec || 0) / 60)}m LEFT
               </span>
             </div>
             <p className="text-[11px] text-cyan-200 mt-0.5">
-              {state.isPro 
-                ? (isUr ? 'Tamam PRO features aur VPN active hain' : 'All PRO features & VPN active')
-                : (isUr ? 'PRO Features Unlock Karein' : 'Unlock Pro Features')}
+              {isUr
+                ? 'Ad dekh kar muft Boost Time aur FPS Unlock karein'
+                : '100% Free • Watch short ads to start Boost & unlock FPS tiers'}
             </p>
           </div>
         </div>
 
-        <button className="px-3 py-1.5 rounded-xl bg-amber-400 text-black font-orbitron font-bold text-xs uppercase shadow-md hover:bg-amber-300 shrink-0 cursor-pointer">
-          {state.isPro ? 'VIEW' : 'UPGRADE'}
+        <button
+          type="button"
+          className="px-3 py-1.5 rounded-xl bg-emerald-400 text-black font-orbitron font-bold text-xs uppercase shadow-md hover:bg-emerald-300 shrink-0 cursor-pointer"
+        >
+          EARN TIME
         </button>
       </div>
 
       {/* Main Settings Toggles (ON = Green, OFF = Grey) */}
       <div className="bg-[#071129]/90 border border-cyan-900/50 rounded-2xl p-4 shadow-xl space-y-4">
         <h3 className="font-orbitron font-bold text-xs text-cyan-300 uppercase tracking-wider">
-          {isUr ? 'Booster Automation Aur Firewall' : 'Booster Automation & Firewall'}
+          {isUr ? 'Booster Automation Aur Power' : 'Booster Automation & Power'}
         </h3>
 
-        {/* VPN Firewall */}
+        {/* Battery Saver Toggle */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center space-x-3 min-w-0 flex-1">
-            <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800/50 flex items-center justify-center text-cyan-400 shrink-0">
-              <Shield className="w-4 h-4" />
+            <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 ${
+              state.batterySaverMode
+                ? 'bg-emerald-950 border-emerald-500/60 text-emerald-400'
+                : 'bg-cyan-950 border-cyan-800/50 text-cyan-400'
+            }`}>
+              <BatteryCharging className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <h4 className="text-xs font-bold text-slate-200">
-                {isUr ? 'VPN Firewall Block' : 'Block VPN Firewall'}
-              </h4>
+              <div className="flex items-center space-x-1.5">
+                <h4 className="text-xs font-bold text-slate-200">
+                  {isUr ? 'Battery Saver Mode' : 'Battery Saver'}
+                </h4>
+                {state.batterySaverMode && (
+                  <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-600/50">
+                    DIMMED
+                  </span>
+                )}
+              </div>
               <p className="text-[10px] text-slate-400">
-                {isUr ? 'Gaming ke waqt background apps ka internet rokein' : 'Use Block VPN to restrict background apps during gaming'}
+                {isUr
+                  ? 'Background polling kam karein aur screen brightness low karein'
+                  : 'Throttle non-essential background tasks & lower screen brightness'}
               </p>
             </div>
           </div>
           <button
-            onClick={() => {
-              const next = !state.isVpnActive;
-              updateSetting('isVpnActive', next);
-              showToast(next ? 'VPN Firewall Enabled' : 'VPN Firewall Disabled');
+            type="button"
+            aria-label="Toggle Battery Saver"
+            onClick={async () => {
+              await toggleBatterySaver();
+              showToast(
+                !state.batterySaverMode
+                  ? 'Battery Saver ON • Throttled & Dimmed'
+                  : 'Battery Saver OFF • Normal Power'
+              );
             }}
             className={`w-11 h-6 rounded-full transition-colors relative p-0.5 shrink-0 cursor-pointer ${
-              state.isVpnActive ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
+              state.batterySaverMode ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-slate-700'
             }`}
           >
-            <div className={`w-5 h-5 rounded-full bg-white transition-transform ${state.isVpnActive ? 'translate-x-5' : 'translate-x-0'}`} />
+            <div className={`w-5 h-5 rounded-full bg-white transition-transform ${state.batterySaverMode ? 'translate-x-5' : 'translate-x-0'}`} />
           </button>
         </div>
 
@@ -338,6 +359,7 @@ export const SettingsScreen: React.FC = () => {
             type="button"
             disabled={isProbingDisplay || displayInfo.isDetecting}
             onClick={async () => {
+              haptics.impactLight();
               sound.playClick();
               setIsProbingDisplay(true);
               try {
@@ -558,7 +580,7 @@ export const SettingsScreen: React.FC = () => {
           </div>
           <div>
             <h4 className="text-xs font-bold text-slate-200">Privacy Policy</h4>
-            <p className="text-[10px] text-slate-400">FPS Booster Data &amp; Payment Privacy Terms</p>
+            <p className="text-[10px] text-slate-400">Global Game Booster Data &amp; Local Firewall Privacy Terms</p>
           </div>
         </div>
         <span className="text-[10px] text-cyan-400 font-mono font-bold bg-cyan-950 px-2.5 py-1 rounded-lg border border-cyan-800/60">
@@ -572,13 +594,13 @@ export const SettingsScreen: React.FC = () => {
         className="text-center py-3 cursor-pointer select-none group"
       >
         <p className="font-orbitron font-bold text-xs text-cyan-400 tracking-wider group-hover:text-cyan-300">
-          FPS BOOSTER PRO 120
+          GLOBAL GAME BOOSTER
         </p>
         <p className="text-[10px] text-slate-400 font-medium">
-          Premium Gaming Edition • Built for Esports
+          One Booster. All Your Games. • 100% Free Ad-Supported
         </p>
         <span className="text-[9px] text-slate-500 font-mono block mt-0.5">
-          v2.4 PRO
+          All-Games Free Edition
         </span>
       </div>
 
@@ -587,7 +609,7 @@ export const SettingsScreen: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div className="w-full max-w-xs bg-[#071333] border border-amber-500/60 rounded-3xl p-5 shadow-2xl text-center space-y-3">
             <h3 className="font-orbitron font-bold text-sm text-white">Admin Security Access</h3>
-            <p className="text-[11px] text-slate-300">Enter Admin PIN to open Order Approvals &amp; Wallet</p>
+            <p className="text-[11px] text-slate-300">Enter Admin PIN to open Diagnostics &amp; Cloud Portal</p>
 
             <form onSubmit={handleAdminSubmit} className="space-y-3">
               <input
@@ -631,7 +653,7 @@ export const SettingsScreen: React.FC = () => {
             </div>
             <h3 className="font-orbitron font-bold text-sm text-white">Clear App Temporary Cache?</h3>
             <p className="text-[11px] text-slate-300 leading-relaxed">
-              Removes <strong className="text-cyan-300">{state.storage?.appTempCacheKb ?? 0} KB</strong> of temporary cache files inside FPS Booster only.
+              Removes <strong className="text-cyan-300">{state.storage?.appTempCacheKb ?? 0} KB</strong> of temporary cache files inside Global Game Booster only.
             </p>
             <div className="grid grid-cols-2 gap-2 pt-1">
               <button
@@ -658,7 +680,11 @@ export const SettingsScreen: React.FC = () => {
       )}
 
       {/* Admin Panel */}
-      {isAdminOpen && <AdminPanel onClose={() => setIsAdminOpen(false)} />}
+      {isAdminOpen && (
+        <Suspense fallback={null}>
+          <AdminPanel onClose={() => setIsAdminOpen(false)} />
+        </Suspense>
+      )}
     </div>
   );
 };

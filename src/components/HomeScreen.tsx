@@ -1,58 +1,45 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, lazy, Suspense } from 'react';
 import { 
-  Gamepad2, 
   Gauge, 
   Crown, 
-  ShieldCheck, 
   Zap, 
-  Flame, 
-  Play, 
-  Gift, 
-  Clock, 
   CheckCircle2, 
-  ArrowRight, 
   Sparkles,
   Info,
-  Layers,
   RotateCcw,
   KeyRound,
   HardDrive,
   AlertTriangle,
   Trash2,
-  Sliders
 } from 'lucide-react';
 import { useBooster } from '../context/BoosterContext.tsx';
 import { sound } from '../utils/audio.ts';
-import { FPSMode, OptimizationProfileMode } from '../types.ts';
-import { OPTIMIZATION_PROFILES } from '../utils/gamingEngine.ts';
-import { AdminPanel } from './AdminPanel.tsx';
+import { haptics } from '../utils/haptics.ts';
+import { FPSMode } from '../types.ts';
+import { resolveNumericFps } from '../utils/gamingEngine.ts';
+import { OneTapBoostButton } from './OneTapBoostButton.tsx';
+
+const AdminPanel = lazy(() =>
+  import('./AdminPanel.tsx').then((m) => ({ default: m.AdminPanel }))
+);
 
 export const HomeScreen: React.FC = () => {
   const { 
     state, 
-    toggleGamingMode, 
+    setFpsMode,
     refreshHardwareTelemetry,
     clearTemporaryCache,
-    startRewardBoost, 
-    tapToBoost,
-    setCurrentScreen,
     userPaymentNotification,
     clearPaymentNotification,
     snackBarMessage,
     setSnackBarMessage,
     applyOptimizationProfile,
-    perGameProfiles,
-    updatePerGameProfile,
     bottleneckReport,
     cloudBackend,
-    gamesList,
-    launchGameWithAutoBoost,
   } = useBooster();
 
-  const [isBoostingAnim, setIsBoostingAnim] = useState(false);
   const [ramNotification, setRamNotification] = useState<string | null>(null);
   const [showCacheConfirmModal, setShowCacheConfirmModal] = useState(false);
-  const [selectedProfileGamePkg, setSelectedProfileGamePkg] = useState<string>(gamesList[0]?.packageName || 'com.tencent.ig');
 
   // Hidden 5-tap logo admin trigger
   const [showAdminPinModal, setShowAdminPinModal] = useState(false);
@@ -62,6 +49,7 @@ export const HomeScreen: React.FC = () => {
   const logoTapRef = useRef({ count: 0, lastTime: 0 });
 
   const handleLogoTap = () => {
+    haptics.impactLight();
     sound.playBoost();
     const now = Date.now();
     if (now - logoTapRef.current.lastTime < 2500) {
@@ -80,52 +68,34 @@ export const HomeScreen: React.FC = () => {
   const handleVerifyPin = (e: React.FormEvent) => {
     e.preventDefault();
     if (adminPin === '7890') {
+      haptics.success();
       sound.playSuccess();
       setShowAdminPinModal(false);
       setAdminPin('');
       setPinError(false);
       setIsAdminOpen(true);
     } else {
+      haptics.error();
       sound.playClick();
       setPinError(true);
     }
   };
 
-  // TAP TO BOOST - INSTANT FREE BOOST (NO ADS, NO FAKE RAM CLEAN)
-  const handleCenterBoostClick = () => {
-    sound.playBoost();
-    setIsBoostingAnim(true);
-    tapToBoost();
-    setRamNotification(
-      state.isPro
-        ? `PRO Engine Active • Pacing up to ${Math.min(Number(state.activeFps), state.maxHardwareHz || 120)}Hz`
-        : `Game Mode Active • Optimizing up to ${Math.min(Number(state.activeFps), state.maxHardwareHz || 120)}Hz`
-    );
-    setTimeout(() => setIsBoostingAnim(false), 1100);
-    setTimeout(() => setRamNotification(null), 3200);
-  };
-
-  // 3 FPS CARDS CLICK LOGIC - HONEST HARDWARE-AWARE ACTIVATION
+  // FPS TARGET PROFILE SELECTION (Hardware-aware; configured inside Super Boost)
   const handleFpsCardClick = (mode: FPSMode) => {
-    sound.playBoost();
-    const durationMinutes = mode === '60' ? 30 : mode === '90' ? 60 : 120;
-    refreshHardwareTelemetry();
-    startRewardBoost(durationMinutes, mode, `${mode} FPS Profile`);
-    if (Number(mode) > (state.maxHardwareHz || 60)) {
-      setSnackBarMessage(`Device max is ${state.maxHardwareHz}Hz — optimizing pacing safely`);
+    haptics.selection();
+    sound.playClick();
+    setFpsMode(mode);
+    const numericTarget = resolveNumericFps(mode, state.maxHardwareHz);
+    if (numericTarget > (state.maxHardwareHz || 60)) {
+      setSnackBarMessage(`Device max is ${state.maxHardwareHz}Hz — target capped safely`);
     } else {
-      setSnackBarMessage(`${mode} FPS Mode Activated • ${durationMinutes} Min Free`);
+      setSnackBarMessage(`${numericTarget} FPS Target Selected for Boost`);
     }
   };
 
-  // DIRECT FREE BOOST TRIGGER
-  const startFreeBoost = (minutes: number, fps: FPSMode, label: string) => {
-    sound.playBoost();
-    refreshHardwareTelemetry();
-    startRewardBoost(minutes, fps, label);
-  };
-
   const handleConfirmClearCache = async () => {
+    haptics.success();
     setShowCacheConfirmModal(false);
     const res = await clearTemporaryCache();
     setRamNotification(
@@ -220,238 +190,27 @@ export const HomeScreen: React.FC = () => {
           <div className="absolute -inset-1 rounded-2xl border border-cyan-400/40 opacity-75 blur-xs pointer-events-none animate-pulse" />
         </div>
 
-        {/* Title: FPS BOOSTER PRO 120 (5-Tap Admin Trigger) */}
+        {/* Title: GLOBAL GAME BOOSTER (5-Tap Admin Trigger) */}
         <div className="mt-2 text-center cursor-pointer select-none" onClick={handleLogoTap}>
           <h1 className="font-orbitron font-black text-2xl sm:text-3xl tracking-tight italic bg-gradient-to-r from-white via-cyan-100 to-cyan-400 bg-clip-text text-transparent drop-shadow-[0_0_15px_rgba(0,191,255,0.7)]">
-            FPS BOOSTER
+            GLOBAL GAME
           </h1>
           <div className="font-orbitron font-extrabold text-2xl sm:text-3xl tracking-wider italic text-cyan-400 -mt-1 drop-shadow-[0_0_20px_rgba(0,229,255,0.9)]">
-            PRO 120
+            BOOSTER
           </div>
 
           <div className="flex items-center justify-center space-x-1.5 mt-0.5 text-xs text-amber-300 font-semibold tracking-wide">
             <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400 drop-shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
             <span className="font-rajdhani text-sm uppercase tracking-wider text-amber-300">
-              {state.language === 'ur' ? 'Pro Ki Tarah Game Khelo' : 'Game Like a Pro'}
+              {state.language === 'ur' ? 'One Booster. All Your Games.' : 'ONE BOOSTER. ALL YOUR GAMES.'}
             </span>
             <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400 drop-shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
           </div>
         </div>
       </div>
 
-      {/* Center: Big Circular Neon Button "Tap to Boost" with Gamepad Icon */}
-      <div className="flex flex-col items-center justify-center py-1 relative">
-        <div className="relative flex items-center justify-center">
-          <div className={`absolute w-44 h-44 rounded-full border border-cyan-500/30 ${isBoostingAnim ? 'animate-ping' : 'animate-pulse'}`} />
-          <div className="absolute w-40 h-40 rounded-full border border-cyan-400/40 blur-xs" />
-          
-          <button
-            onClick={handleCenterBoostClick}
-            className={`w-36 h-36 rounded-full relative flex flex-col items-center justify-center cursor-pointer transition-all duration-300 ${
-              isBoostingAnim 
-                ? 'scale-95 shadow-[0_0_60px_rgba(0,229,255,1)]' 
-                : 'hover:scale-105 shadow-[0_0_35px_rgba(0,191,255,0.6)] active:scale-95'
-            } bg-gradient-to-b from-[#0a1a3a] via-[#040e24] to-[#010816] border-2 border-cyan-400`}
-            style={{
-              boxShadow: '0 0 30px rgba(0, 191, 255, 0.5), inset 0 0 25px rgba(0, 191, 255, 0.4)',
-            }}
-          >
-            <div className="absolute inset-1 rounded-full border-2 border-dashed border-cyan-400/40 animate-[spin_12s_linear_infinite]" />
-
-            <div className="relative mb-1">
-              <Gamepad2 className="w-10 h-10 text-cyan-300 drop-shadow-[0_0_12px_rgba(0,229,255,0.9)]" />
-              {isBoostingAnim && (
-                <Zap className="w-6 h-6 text-amber-300 absolute -top-1 -right-2 animate-bounce fill-amber-300" />
-              )}
-            </div>
-
-            <span className="font-orbitron font-bold text-xs tracking-wider text-white uppercase drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]">
-              {isBoostingAnim ? 'BOOSTING...' : 'Tap to Boost'}
-            </span>
-            <span className="text-[9px] text-cyan-400 font-mono tracking-widest mt-0.5 uppercase">
-              {state.isBoosting ? `${state.activeFps} FPS ACTIVE` : (state.isPro ? 'PRO VIP READY' : 'FREE INSTANT')}
-            </span>
-          </button>
-        </div>
-
-        {/* Gaming Mode Toggle Pill (OFF = Grey, ON = Green) */}
-        <div className="mt-3 flex items-center justify-between w-72 max-w-full px-4 py-2 rounded-full bg-[#0a1633] border border-cyan-800/60 shadow-lg shadow-black/60">
-          <div className="flex items-center space-x-2 min-w-0">
-            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${state.isGamingModeOn ? 'bg-emerald-400 animate-pulse shadow-[0_0_8px_#34d399]' : 'bg-slate-500'}`} />
-            <div className="leading-tight">
-              <div className="flex items-center space-x-1.5">
-                <span className="font-orbitron text-xs font-bold tracking-wide text-slate-200">
-                  Gaming Mode
-                </span>
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${state.isGamingModeOn ? 'text-emerald-300 bg-emerald-950/80 border border-emerald-500/40' : 'text-slate-300 bg-slate-800 border border-slate-600'}`}>
-                  {state.isGamingModeOn ? 'ON' : 'OFF'}
-                </span>
-              </div>
-              {!state.isGamingModeOn && (
-                <span className="text-[10px] text-slate-400 block">Tap to Boost to Start</span>
-              )}
-            </div>
-          </div>
-
-          <button
-            onClick={toggleGamingMode}
-            aria-label="Toggle Gaming Mode"
-            className={`w-11 h-6 rounded-full transition-colors relative p-0.5 cursor-pointer shrink-0 ${
-              state.isGamingModeOn ? 'bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.7)]' : 'bg-slate-600'
-            }`}
-          >
-            <div 
-              className={`w-5 h-5 rounded-full bg-white transition-transform shadow-md ${
-                state.isGamingModeOn ? 'translate-x-5' : 'translate-x-0'
-              }`}
-            />
-          </button>
-        </div>
-      </div>
-
-      {/* BIG VISIBLE FREE BOOST CARD DIRECTLY UNDER TAP TO BOOST */}
-      <div className="p-3.5 rounded-2xl bg-gradient-to-r from-[#041f18] via-[#052920] to-[#031410] border-2 border-emerald-400/80 shadow-[0_0_25px_rgba(52,211,153,0.28)] flex items-center justify-between gap-2.5">
-        <div className="flex items-center space-x-2.5 min-w-0 flex-1">
-          <div className="w-9 h-9 rounded-xl bg-emerald-400/20 border border-emerald-400/60 flex items-center justify-center text-emerald-400 shrink-0 shadow-md">
-            <Zap className="w-5 h-5 animate-pulse" />
-          </div>
-          <div className="min-w-0">
-            <h4 className="font-orbitron font-extrabold text-xs text-white uppercase tracking-tight">
-              Free Instant Boost
-            </h4>
-            <p className="text-[11px] text-emerald-300 font-mono font-semibold">
-              {state.isBoosting && state.boostTimeRemainingSec > 0
-                ? 'Boost Activated • Running'
-                : '1 Click = 30 Min Boost (Free)'}
-            </p>
-          </div>
-        </div>
-
-        {state.isBoosting && state.boostTimeRemainingSec > 0 ? (
-          <div className="px-3 py-2 rounded-xl bg-emerald-500/20 border border-emerald-400/70 text-emerald-300 font-mono font-bold text-[11px] shrink-0 text-center">
-            {Math.floor(state.boostTimeRemainingSec / 60).toString().padStart(2, '0')}:
-            {(state.boostTimeRemainingSec % 60).toString().padStart(2, '0')} Left
-          </div>
-        ) : (
-          <button
-            onClick={() => startFreeBoost(30, state.activeFps, 'Free Instant Boost (30 Min)')}
-            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 text-black font-orbitron font-extrabold text-[11px] uppercase tracking-wider shadow-lg shadow-emerald-400/40 hover:brightness-110 active:scale-95 transition-all flex items-center space-x-1 cursor-pointer shrink-0"
-          >
-            <span>Start Boost</span>
-            <Play className="w-3 h-3 fill-black" />
-          </button>
-        )}
-      </div>
-
-      {/* 5 OPTIMIZATION PROFILES + SMART GAME LAUNCHER */}
-      <div className="p-3 rounded-2xl bg-[#071129]/90 border border-cyan-900/60 space-y-2.5">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-orbitron font-bold text-cyan-300 uppercase tracking-wider flex items-center space-x-1">
-            <Layers className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Optimization Modes</span>
-          </span>
-          <span className="text-[9px] font-mono text-emerald-300 bg-emerald-950/70 border border-emerald-700/50 px-1.5 py-0.5 rounded">
-            {state.activeProfile.replace('_', ' ')}
-          </span>
-        </div>
-
-        <div className="flex items-center space-x-1.5 overflow-x-auto pb-0.5">
-          {(cloudBackend.remoteProfiles.length > 0 ? cloudBackend.remoteProfiles : OPTIMIZATION_PROFILES).map((prof) => {
-            const active = state.activeProfile === prof.id;
-            return (
-              <button
-                key={prof.id}
-                type="button"
-                onClick={() => applyOptimizationProfile(prof.id as OptimizationProfileMode)}
-                className={`px-2.5 py-1.5 rounded-xl border text-[10px] font-mono font-bold whitespace-nowrap cursor-pointer transition-all shrink-0 ${
-                  active
-                    ? 'bg-cyan-500 text-black border-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.5)]'
-                    : 'bg-[#040c1f] text-slate-300 border-slate-800 hover:border-cyan-700'
-                }`}
-              >
-                {prof.name}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="pt-1 border-t border-cyan-950/80 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[9px] font-mono text-slate-400 uppercase">Smart Game Session Launcher</span>
-            <span className="text-[9px] font-mono text-cyan-400">Per-Game Profile + Engine</span>
-          </div>
-          <div className="flex items-center space-x-1.5 overflow-x-auto pb-0.5">
-            {gamesList.map((g) => (
-              <button
-                key={g.id}
-                type="button"
-                onClick={() => launchGameWithAutoBoost(g)}
-                className="px-2.5 py-1.5 rounded-xl bg-[#050f26] border border-cyan-800/60 hover:border-emerald-400 text-[10px] font-orbitron font-bold text-white whitespace-nowrap flex items-center space-x-1.5 cursor-pointer shrink-0 active:scale-95 gaming-card-transition"
-              >
-                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: g.iconColor }} />
-                <span>{g.name}</span>
-                <Play className="w-2.5 h-2.5 text-emerald-400 fill-emerald-400" />
-              </button>
-            ))}
-          </div>
-
-          {/* Per-Game Profile Quick Selector */}
-          {(() => {
-            const selectedGameObj = gamesList.find(g => g.packageName === selectedProfileGamePkg) || gamesList[0];
-            const prof = perGameProfiles[selectedGameObj.packageName] || {
-              gamePackage: selectedGameObj.packageName,
-              profileMode: state.activeProfile,
-              targetFps: state.activeFps,
-              resolutionScale: state.resolutionScale,
-              firewallPreset: 'custom',
-              updatedAt: Date.now(),
-            };
-            const cycleFps: FPSMode = prof.targetFps === '60' ? '90' : prof.targetFps === '90' ? '120' : '60';
-            return (
-              <div className="bg-[#040c1f] border border-cyan-950/90 rounded-xl p-2 flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center space-x-1.5 min-w-0">
-                  <Sliders className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                  <select
-                    value={selectedGameObj.packageName}
-                    onChange={(e) => setSelectedProfileGamePkg(e.target.value)}
-                    aria-label="Select Game Profile"
-                    className="bg-[#071129] border border-cyan-900/70 text-[10px] font-mono text-white rounded-lg px-2 py-1 focus:outline-none"
-                  >
-                    {gamesList.map(g => (
-                      <option key={g.id} value={g.packageName}>{g.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex items-center space-x-1.5">
-                  <button
-                    type="button"
-                    onClick={() => updatePerGameProfile(selectedGameObj.packageName, { targetFps: cycleFps })}
-                    className="px-2 py-1 rounded-lg bg-cyan-950 border border-cyan-700/60 text-cyan-300 text-[9px] font-mono font-bold cursor-pointer"
-                  >
-                    {prof.targetFps} FPS
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextMode: OptimizationProfileMode =
-                        prof.profileMode === 'SMART_BOOST'
-                          ? 'PERFORMANCE_MODE'
-                          : prof.profileMode === 'PERFORMANCE_MODE'
-                          ? 'BATTERY_SAVER'
-                          : 'SMART_BOOST';
-                      updatePerGameProfile(selectedGameObj.packageName, { profileMode: nextMode });
-                    }}
-                    className="px-2 py-1 rounded-lg bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 text-[9px] font-mono font-bold cursor-pointer"
-                  >
-                    {prof.profileMode.replace('_MODE', '').replace('_', ' ')}
-                  </button>
-                </div>
-              </div>
-            );
-          })()}
-        </div>
-      </div>
+      {/* UNIFIED ONE-TAP SUPER BOOST MASTER CONTROL (Top: Boost Details, Middle: BOOST Button) */}
+      <OneTapBoostButton />
 
       {/* 3 HONEST FPS CARDS */}
       <div className="space-y-1.5 pt-1">
@@ -548,109 +307,6 @@ export const HomeScreen: React.FC = () => {
         </p>
       </div>
 
-      {/* 4 FREE BOOST CARDS: INSTANT TIMER ACTIVATION */}
-      <div className="pt-1">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-orbitron font-bold text-emerald-300 uppercase tracking-wider flex items-center space-x-1.5">
-            <Zap className="w-4 h-4 text-emerald-400" />
-            <span>⚡ FREE BOOST TIMERS</span>
-          </span>
-          <button 
-            onClick={() => { sound.playClick(); setCurrentScreen('reward_ad'); }}
-            className="text-[11px] text-cyan-400 hover:text-cyan-300 font-mono font-semibold cursor-pointer"
-          >
-            All Timers &gt;
-          </button>
-        </div>
-
-        {/* 4 Cards in 2x2 Grid */}
-        <div className="grid grid-cols-2 gap-2">
-          {/* CARD 1: Yellow - Quick Boost (+30 Min Free) */}
-          <div
-            onClick={() => startFreeBoost(30, '60', 'Quick Boost (+30 Min Free)')}
-            className="p-2.5 rounded-xl bg-[#1c1803]/90 border border-yellow-500/50 hover:border-yellow-400 transition-all cursor-pointer flex items-center justify-between group hover:shadow-lg hover:shadow-yellow-950"
-          >
-            <div className="flex items-center space-x-2">
-              <div className="w-7 h-7 rounded-lg bg-yellow-500/20 border border-yellow-400 flex items-center justify-center text-xs font-bold text-yellow-400 shadow-md">
-                <Play className="w-3.5 h-3.5 fill-yellow-400" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-200 group-hover:text-yellow-300 transition-colors leading-tight">
-                  Quick Boost
-                </h4>
-                <p className="text-[9px] text-yellow-400 font-mono">+30 Min Free</p>
-              </div>
-            </div>
-            <button className="text-[10px] bg-yellow-400 text-black font-bold px-2 py-1 rounded font-mono uppercase shadow-sm cursor-pointer">
-              START
-            </button>
-          </div>
-
-          {/* CARD 2: Orange - Power Boost (+30 Min Free) */}
-          <div
-            onClick={() => startFreeBoost(30, '60', 'Power Boost (+30 Min Free)')}
-            className="p-2.5 rounded-xl bg-[#1f1103]/90 border border-orange-500/50 hover:border-orange-400 transition-all cursor-pointer flex items-center justify-between group hover:shadow-lg hover:shadow-orange-950"
-          >
-            <div className="flex items-center space-x-2">
-              <div className="w-7 h-7 rounded-lg bg-orange-500/20 border border-orange-400 flex items-center justify-center text-xs font-bold text-orange-400 shadow-md">
-                <Flame className="w-3.5 h-3.5 text-orange-400" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-200 group-hover:text-orange-300 transition-colors leading-tight">
-                  Power Boost
-                </h4>
-                <p className="text-[9px] text-orange-400 font-mono">+30 Min Free</p>
-              </div>
-            </div>
-            <button className="text-[10px] bg-orange-500 text-black font-bold px-2 py-1 rounded font-mono uppercase shadow-sm cursor-pointer">
-              BOOST
-            </button>
-          </div>
-
-          {/* CARD 3: Blue - Turbo Boost (+60 Min Free) */}
-          <div
-            onClick={() => startFreeBoost(60, '90', 'Turbo Boost (+60 Min Free)')}
-            className="p-2.5 rounded-xl bg-[#031424]/90 border border-cyan-500/50 hover:border-cyan-400 transition-all cursor-pointer flex items-center justify-between group hover:shadow-lg hover:shadow-cyan-950"
-          >
-            <div className="flex items-center space-x-2">
-              <div className="w-7 h-7 rounded-lg bg-cyan-500/20 border border-cyan-400 flex items-center justify-center text-xs font-bold text-cyan-400 shadow-md">
-                <Zap className="w-3.5 h-3.5 fill-cyan-400 text-cyan-400" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-200 group-hover:text-cyan-300 transition-colors leading-tight">
-                  Turbo Boost
-                </h4>
-                <p className="text-[9px] text-cyan-400 font-mono">+60 Min Free</p>
-              </div>
-            </div>
-            <button className="text-[10px] bg-cyan-400 text-black font-bold px-2 py-1 rounded font-mono uppercase shadow-sm cursor-pointer">
-              BOOST
-            </button>
-          </div>
-
-          {/* CARD 4: Pink - Extreme Boost (+120 Min Free) */}
-          <div
-            onClick={() => startFreeBoost(120, '120', 'Extreme Boost (+120 Min Free)')}
-            className="p-2.5 rounded-xl bg-[#1c031c]/90 border border-pink-500/50 hover:border-pink-400 transition-all cursor-pointer flex items-center justify-between group hover:shadow-lg hover:shadow-pink-950"
-          >
-            <div className="flex items-center space-x-2">
-              <div className="w-7 h-7 rounded-lg bg-pink-500/20 border border-pink-400 flex items-center justify-center text-xs font-bold text-pink-400 shadow-md">
-                <Crown className="w-3.5 h-3.5 fill-pink-400 text-pink-400" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-200 group-hover:text-pink-300 transition-colors leading-tight">
-                  Extreme Boost
-                </h4>
-                <p className="text-[9px] text-pink-400 font-mono">+120 Min Free</p>
-              </div>
-            </div>
-            <button className="text-[10px] bg-pink-500 text-white font-bold px-2 py-1 rounded font-mono uppercase shadow-sm cursor-pointer">
-              START
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* Bottom Live Hardware Stats Bar (RAM, Real Storage, Bottleneck Status) */}
       <div className="pt-1">
         <div className="p-3 rounded-2xl bg-[#071129]/90 border border-cyan-900/60 shadow-xl shadow-black/80 space-y-2">
@@ -662,6 +318,7 @@ export const HomeScreen: React.FC = () => {
             <button
               type="button"
               onClick={() => {
+                haptics.impactLight();
                 sound.playClick();
                 refreshHardwareTelemetry();
               }}
@@ -678,15 +335,16 @@ export const HomeScreen: React.FC = () => {
             <div className="grid grid-cols-3 gap-1.5">
               {/* FPS */}
               <div className="bg-[#050b1a] p-2 rounded-xl border border-cyan-950 flex flex-col justify-center">
-                <span className="text-[9px] text-slate-400 block font-mono">FPS ({state.maxHardwareHz}Hz)</span>
+                <span className="text-[9px] text-slate-400 block font-mono">{`FPS (${state.maxHardwareHz}Hz)`}</span>
                 <span id="fps" className="font-orbitron font-extrabold text-sm text-cyan-300 drop-shadow-[0_0_6px_rgba(6,182,212,0.8)]">
-                  {state.currentFps}
+                  {String(state.currentFps)}
                 </span>
               </div>
 
               {/* RAM - Real MemoryInfo */}
               <div 
                 onClick={() => {
+                  haptics.impactLight();
                   sound.playClick();
                   refreshHardwareTelemetry();
                 }} 
@@ -698,9 +356,9 @@ export const HomeScreen: React.FC = () => {
                   <RotateCcw className="w-2 h-2 text-cyan-400" />
                 </div>
                 <span id="ram" className="font-orbitron font-extrabold text-[11px] text-emerald-400 block whitespace-nowrap">
-                  {Number(state.ramUsedGb).toFixed(1)} / {Number(state.totalRamGb).toFixed(1)} GB
+                  {`${Number(state.ramUsedGb).toFixed(1)} / ${Number(state.totalRamGb).toFixed(1)} GB`}
                 </span>
-                <span id="ramPercent" className="text-[8px] text-slate-400 block -mt-0.5">{state.ramUsagePercent}% Used</span>
+                <span id="ramPercent" className="text-[8px] text-slate-400 block -mt-0.5">{`${state.ramUsagePercent}% Used`}</span>
               </div>
 
               {/* Temp */}
@@ -716,7 +374,7 @@ export const HomeScreen: React.FC = () => {
                       : 'text-amber-400'
                   }`}
                 >
-                  {Number(state.temperatureC).toFixed(1)}°C
+                  {`${Number(state.temperatureC).toFixed(1)}°C`}
                 </span>
               </div>
             </div>
@@ -726,15 +384,15 @@ export const HomeScreen: React.FC = () => {
               <div className="bg-[#050b1a] p-2 rounded-xl border border-cyan-950 flex items-center justify-between px-3">
                 <span className="text-[9px] text-slate-400 font-mono">BATTERY</span>
                 <span id="battery" className="font-orbitron font-extrabold text-xs text-emerald-300">
-                  {state.batteryLevel ?? 88}%{state.isBatteryCharging ? ' ⚡' : ''}
+                  {`${state.batteryLevel ?? 88}%${state.isBatteryCharging ? ' ⚡' : ''}`}
                 </span>
               </div>
 
               {/* Ping */}
               <div className="bg-[#050b1a] p-2 rounded-xl border border-cyan-950 flex items-center justify-between px-3">
                 <span className="text-[9px] text-slate-400 font-mono">PING</span>
-                <span className={`font-orbitron font-extrabold text-xs ${state.isOnline === false ? 'text-red-400' : 'text-cyan-400'}`}>
-                  {state.isOnline === false ? 'Offline' : `${state.pingMs}ms`}
+                <span className={`font-orbitron font-extrabold text-xs tabular-nums ${state.isOnline === false ? 'text-red-400' : 'text-cyan-400'}`}>
+                  {state.isOnline === false ? 'Offline' : state.pingMs > 0 ? `${state.pingMs}ms` : 'Probing...'}
                 </span>
               </div>
             </div>
@@ -755,6 +413,7 @@ export const HomeScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  haptics.impactLight();
                   sound.playClick();
                   setShowCacheConfirmModal(true);
                 }}
@@ -786,7 +445,10 @@ export const HomeScreen: React.FC = () => {
               {bottleneckReport.level !== 'optimal' && (
                 <button
                   type="button"
-                  onClick={() => applyOptimizationProfile(bottleneckReport.recommendedProfile)}
+                  onClick={() => {
+                    haptics.selection();
+                    applyOptimizationProfile(bottleneckReport.recommendedProfile);
+                  }}
                   className="px-2 py-1 rounded-lg bg-amber-400 text-black text-[9px] font-orbitron font-bold whitespace-nowrap cursor-pointer shrink-0"
                 >
                   Use {bottleneckReport.recommendedFps} FPS
@@ -794,39 +456,6 @@ export const HomeScreen: React.FC = () => {
               )}
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* PRO CARD UNDER STATS */}
-      <div 
-        onClick={() => {
-          sound.playClick();
-          setCurrentScreen('premium');
-        }}
-        className="p-3.5 rounded-2xl bg-gradient-to-r from-[#170a24] via-[#1f0d33] to-[#0c0417] border-2 border-[#FFC107] shadow-[0_0_20px_rgba(255,193,7,0.3)] cursor-pointer hover:scale-[1.01] transition-transform flex items-center justify-between"
-      >
-        <div className="flex items-center space-x-2.5">
-          <div className="w-9 h-9 rounded-xl bg-amber-400/20 border border-amber-400 flex items-center justify-center text-amber-400 shrink-0 shadow-md">
-            <Crown className="w-5 h-5 fill-amber-400 text-amber-300" />
-          </div>
-          <div>
-            <div className="flex items-center space-x-1.5">
-              <h4 className="font-orbitron font-extrabold text-xs text-white uppercase tracking-wider">
-                UPGRADE TO PRO
-              </h4>
-              <span className="text-[9px] bg-gradient-to-r from-amber-400 to-yellow-300 text-black font-bold px-1.5 rounded font-mono">
-                599 VIP
-              </span>
-            </div>
-            <p className="text-[10px] text-amber-200/90 font-medium">
-              Auto Ping + Auto Boost + VIP Mode • Optimize Best FPS
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center space-x-1 text-xs text-amber-400 font-bold font-mono shrink-0">
-          <span>View Packages</span>
-          <ArrowRight className="w-3.5 h-3.5" />
         </div>
       </div>
 
@@ -838,7 +467,7 @@ export const HomeScreen: React.FC = () => {
               <KeyRound className="w-6 h-6" />
             </div>
             <h3 className="font-orbitron font-bold text-sm text-white">Admin Security Access</h3>
-            <p className="text-[11px] text-slate-300">Enter Admin PIN to open Order Approvals &amp; Wallet</p>
+            <p className="text-[11px] text-slate-300">Enter Admin PIN to open Diagnostics &amp; Cloud Portal</p>
 
             <form onSubmit={handleVerifyPin} className="space-y-3">
               <input
@@ -882,7 +511,7 @@ export const HomeScreen: React.FC = () => {
             </div>
             <h3 className="font-orbitron font-bold text-sm text-white">Clear Temporary App Cache?</h3>
             <p className="text-[11px] text-slate-300 leading-relaxed">
-              This will safely remove <strong className="text-cyan-300">{state.storage?.appTempCacheKb ?? 0} KB</strong> of temporary cache files inside FPS Booster only. Your settings, PRO status, and other apps remain untouched.
+              This will safely remove <strong className="text-cyan-300">{state.storage?.appTempCacheKb ?? 0} KB</strong> of temporary cache files inside Global Game Booster only. Your settings, active boost countdown, and other apps remain untouched.
             </p>
             <div className="grid grid-cols-2 gap-2 pt-1">
               <button
@@ -905,7 +534,11 @@ export const HomeScreen: React.FC = () => {
       )}
 
       {/* Hidden Admin Portal */}
-      {isAdminOpen && <AdminPanel onClose={() => setIsAdminOpen(false)} />}
+      {isAdminOpen && (
+        <Suspense fallback={null}>
+          <AdminPanel onClose={() => setIsAdminOpen(false)} />
+        </Suspense>
+      )}
     </div>
   );
 };

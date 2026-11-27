@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { Activity } from 'lucide-react';
 import { FpsHistoryPoint, FPSMode } from '../types.ts';
+import { resolveNumericFps } from '../utils/gamingEngine.ts';
 
 interface FpsHistoryChartProps {
   data: FpsHistoryPoint[];
@@ -24,7 +25,7 @@ export const FpsHistoryChart: React.FC<FpsHistoryChartProps> = ({
       .filter((pt) => pt.timestamp >= thirtyMinAgo)
       .sort((a, b) => a.timestamp - b.timestamp);
 
-    const safeTarget = Number(targetFps) || 60;
+    const safeTarget = resolveNumericFps(targetFps, maxHardwareHz);
     const computedSeries: FpsHistoryPoint[] =
       filtered.length >= 2
         ? filtered
@@ -237,6 +238,10 @@ export const FpsHistoryChart: React.FC<FpsHistoryChartProps> = ({
         focusGroup.style('display', 'none');
         setHoveredPoint(null);
       });
+
+    return () => {
+      svg.selectAll('*').remove();
+    };
   }, [series, targetNum, maxHardwareHz, maxFps]);
 
   return (

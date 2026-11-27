@@ -3,6 +3,8 @@ import {
   BoosterState,
   ScreenType,
   FPSMode,
+  FpsTierKey,
+  FpsUnlockStatus,
   AppBlockItem,
   GameItem,
   ProPackage,
@@ -27,8 +29,14 @@ import {
   BottleneckItem,
   ThermalMonitorState,
   DisplayHardwareInfo,
+  SuperBoostProgressState,
+  RecoveryLogItem,
+  PermissionFlowStep,
+  PermissionChecklistState,
+  BoostSessionSummary,
 } from '../types.ts';
 import { sound } from '../utils/audio.ts';
+import { haptics } from '../utils/haptics.ts';
 import { RefreshRateDetector } from '../utils/fpsDetector.ts';
 import {
   ensureAnonymousAuth,
@@ -49,18 +57,38 @@ import {
 } from '../utils/firebase.ts';
 import {
   OPTIMIZATION_PROFILES,
+  GLOBAL_GAMES_CATALOG,
   GamingEngineNative,
   GamingFirewallNative,
   isNativeAndroidRuntime,
   queryDeviceCapabilities,
   engageNativeProfile,
+  applyNativeScreenBrightness,
+  filterSafeBlockedPackages,
+  filterAllowedPackages,
+  queryNativePermissionChecklist,
+  setNativeDndMode,
+  trimNativeBackgroundMemory,
+  probeNativeNetworkLatency,
+  fetchNativeInstalledApps,
+  fetchNativeInstalledGames,
+  launchNativeGamePackage,
+  openGameStorePage,
+  categorizePackageName,
+  resolveNumericFps,
+  mapFpsForFirestore,
+  NativeVpnStatusPayload,
 } from '../utils/gamingEngine.ts';
 import {
   readSystemThermalData,
   evaluateThermalReading,
   startComputePressureObserver,
 } from '../utils/thermalMonitor.ts';
-import { runNetworkSpeedDiagnostics } from '../utils/networkDiagnostics.ts';
+import {
+  runNetworkSpeedDiagnostics,
+  measureWarmEndpointRtt,
+  classifyConnectionStability,
+} from '../utils/networkDiagnostics.ts';
 import { scanScreenshotForTid } from '../utils/ocr.ts';
 import { onAuthStateChanged } from 'firebase/auth';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
@@ -77,24 +105,42 @@ export interface ServerRegionPing {
   sublabel: string;
   location: string;
   url: string;
+  host: string;
   baseLatencyMs: number;
   currentPingMs: number;
   jitterMs: number;
   packetLossPercent: number;
+  reachable?: boolean;
   status: 'optimal' | 'good' | 'moderate';
 }
 
 export const INITIAL_SERVER_REGIONS: ServerRegionPing[] = [
+  {
+    id: 'direct-anycast',
+    name: 'Direct Anycast Edge (Lowest Hop)',
+    sublabel: 'Nearest Non-VPN Direct Routing Node',
+    location: 'Nearest Edge',
+    url: 'https://1.1.1.1/cdn-cgi/trace',
+    host: '1.1.1.1',
+    baseLatencyMs: 0,
+    currentPingMs: 0,
+    jitterMs: 0,
+    packetLossPercent: 0.0,
+    reachable: true,
+    status: 'optimal',
+  },
   {
     id: 'asia-south',
     name: 'Asia South (Mumbai)',
     sublabel: 'Free Fire & BGMI Matchmaking',
     location: 'Mumbai, IN',
     url: 'https://cloudflare.com/cdn-cgi/trace',
-    baseLatencyMs: 58,
-    currentPingMs: 58,
-    jitterMs: 1.4,
+    host: 'cloudflare.com',
+    baseLatencyMs: 0,
+    currentPingMs: 0,
+    jitterMs: 0,
     packetLossPercent: 0.0,
+    reachable: true,
     status: 'good',
   },
   {
@@ -102,11 +148,13 @@ export const INITIAL_SERVER_REGIONS: ServerRegionPing[] = [
     name: 'Asia Southeast (Singapore)',
     sublabel: 'COD Mobile & MLBB SEA Hub',
     location: 'Singapore, SG',
-    url: 'https://1.1.1.1/cdn-cgi/trace',
-    baseLatencyMs: 68,
-    currentPingMs: 68,
-    jitterMs: 1.6,
+    url: 'https://dns.google/resolve?name=example.com&type=A',
+    host: '8.8.8.8',
+    baseLatencyMs: 0,
+    currentPingMs: 0,
+    jitterMs: 0,
     packetLossPercent: 0.0,
+    reachable: true,
     status: 'good',
   },
   {
@@ -114,11 +162,13 @@ export const INITIAL_SERVER_REGIONS: ServerRegionPing[] = [
     name: 'Middle East (Dubai / Bahrain)',
     sublabel: 'MENA Esports Relay Server',
     location: 'Dubai, UAE',
-    url: 'https://dns.google',
-    baseLatencyMs: 76,
-    currentPingMs: 76,
-    jitterMs: 2.1,
+    url: 'https://9.9.9.9',
+    host: '9.9.9.9',
+    baseLatencyMs: 0,
+    currentPingMs: 0,
+    jitterMs: 0,
     packetLossPercent: 0.0,
+    reachable: true,
     status: 'good',
   },
   {
@@ -127,10 +177,12 @@ export const INITIAL_SERVER_REGIONS: ServerRegionPing[] = [
     sublabel: 'EU Battle Royale Cluster',
     location: 'Frankfurt, DE',
     url: 'https://aws.amazon.com',
-    baseLatencyMs: 112,
-    currentPingMs: 112,
-    jitterMs: 2.8,
+    host: 'aws.amazon.com',
+    baseLatencyMs: 0,
+    currentPingMs: 0,
+    jitterMs: 0,
     packetLossPercent: 0.0,
+    reachable: true,
     status: 'moderate',
   },
   {
@@ -139,10 +191,12 @@ export const INITIAL_SERVER_REGIONS: ServerRegionPing[] = [
     sublabel: 'Global Championship Route',
     location: 'Virginia, US',
     url: 'https://www.google.com',
-    baseLatencyMs: 158,
-    currentPingMs: 158,
-    jitterMs: 3.5,
+    host: 'www.google.com',
+    baseLatencyMs: 0,
+    currentPingMs: 0,
+    jitterMs: 0,
     packetLossPercent: 0.0,
+    reachable: true,
     status: 'moderate',
   },
 ];
@@ -168,20 +222,38 @@ interface BoosterContextType {
   setSnackBarMessage: (msg: string | null) => void;
   clearPaymentNotification: () => void;
 
-  // Unified Real-Time Ping Monitor & Network Diagnostics
+  // Global Game Library & Native PackageManager Discovery
+  refreshInstalledPackages: () => Promise<void>;
+  isRefreshingPackages: boolean;
+  catalogSource: 'android_packagemanager' | 'catalog';
+  favoriteGamePackages: string[];
+  recentGamePackages: string[];
+  toggleFavoriteGame: (packageName: string) => void;
+  markGamePlayed: (packageName: string) => void;
+  launchSelectedGame: (game: GameItem) => Promise<void>;
+  installGameFromStore: (game: GameItem) => Promise<void>;
+  resetAppBlockRules: () => void;
+
+  // Unified Real-Time Ping Monitor & Network Optimization Engine
   serverRegions: ServerRegionPing[];
   selectedRegionId: string;
   activeRegion: ServerRegionPing;
   isProbing: boolean;
   lastProbedTime: string;
-  runPingProbe: () => Promise<void>;
+  runPingProbe: (onlyActiveRegion?: boolean) => Promise<void>;
   selectPingRegion: (regionId: string) => void;
   networkDiagnostics: NetworkDiagnosticsState;
   runFullNetworkDiagnostics: () => Promise<void>;
+  optimizeNetworkRoute: (reason?: string) => Promise<void>;
+  toggleAutoOptimizeNetwork: () => void;
 
   // 30-Min FPS History, Per-Game Profiles & Bottleneck Detector
   fpsHistory: FpsHistoryPoint[];
-  applyOptimizationProfile: (profile: OptimizationProfileMode, gamePkg?: string) => Promise<void>;
+  applyOptimizationProfile: (
+    profile: OptimizationProfileMode,
+    gamePkg?: string,
+    options?: { skipFirestoreSync?: boolean; preserveSessionState?: boolean }
+  ) => Promise<void>;
   perGameProfiles: Record<string, PerGameProfile>;
   updatePerGameProfile: (gamePackage: string, patch: Partial<PerGameProfile>) => void;
   bottleneckReport: BottleneckReport;
@@ -197,14 +269,40 @@ interface BoosterContextType {
   logCrashDiagnostic: (message: string, stack?: string, screen?: string) => Promise<void>;
   submitManualPerformanceSnapshot: () => Promise<void>;
 
-  // Local VPN Firewall & Smart Session
+  // Local VPN Firewall Rules & Smart Session (Activation unified under Boost ON/OFF)
   firewallState: FirewallState;
-  toggleFirewallMaster: () => Promise<void>;
+  toggleDnsFilter: () => void;
+  toggleBlockAllNonSelected: () => void;
   requestFirewallVpnPermission: () => Promise<boolean>;
   setProtectedGame: (game: GameItem) => Promise<void>;
   applyFirewallPreset: (preset: FirewallPresetMode) => Promise<void>;
   restorePreviousFirewallRules: () => Promise<void>;
   smartSession: SmartSessionState;
+
+  // Unified One-Tap Super Boost Master Control & Recovery Watchdog
+  masterBoostActive: boolean;
+  superBoost: SuperBoostProgressState;
+  selectedSuperBoostGamePkg: string;
+  setSelectedSuperBoostGamePkg: (pkg: string) => void;
+  recoveryHistory: RecoveryLogItem[];
+  handleToggleBoost: (game?: GameItem) => Promise<void>;
+  activateSuperBoost: (game?: GameItem) => Promise<void>;
+  stopSuperBoost: () => Promise<void>;
+  isBoostDetailsOpen: boolean;
+  setIsBoostDetailsOpen: (open: boolean) => void;
+  boostDetailsSummary: BoostSessionSummary | null;
+  permissionFlow: {
+    isOpen: boolean;
+    currentStep: PermissionFlowStep | null;
+    stepsQueue: PermissionFlowStep[];
+    checklist: PermissionChecklistState;
+    isRequesting: boolean;
+    pendingGame: GameItem | null;
+  };
+  handlePermissionFlowAllow: () => Promise<void>;
+  requestSequentialBoostPermissions: () => Promise<PermissionChecklistState>;
+  skipPermissionFlowStep: () => void;
+  closePermissionFlow: () => void;
 
   // Device Temperature Monitor & High-Temp Gaming Warnings
   thermalMonitor: ThermalMonitorState;
@@ -215,11 +313,10 @@ interface BoosterContextType {
   applyThermalCooldownProfile: () => Promise<void>;
 
   // Actions
-  toggleGamingMode: () => void;
   setFpsMode: (mode: FPSMode) => void;
   toggleAppBlock: (id: string) => void;
   toggleAllAppsBlock: (blockAll: boolean) => void;
-  applyVpnFirewall: () => void;
+  toggleBatterySaver: () => Promise<void>;
   cleanRam: () => { freedMb: number; newPercent: number };
   refreshHardwareTelemetry: () => Promise<void>;
   clearTemporaryCache: () => Promise<{ freedKb: number; remainingCacheKb: number; freeGb: string; totalGb: string }>;
@@ -228,9 +325,12 @@ interface BoosterContextType {
   launchGameWithAutoBoost: (game: GameItem) => void;
   stopGamingMode: () => void;
 
-  // Direct Timer Boost
-  startRewardBoost: (durationMinutes: number, targetFps?: FPSMode, label?: string) => void;
-  tapToBoost: () => void;
+  // Boost Timer Duration Preset & Rewarded Ad Time Grant (Executed via Unified Boost ON/OFF)
+  setBoostDurationPreset: (durationMinutes: number, targetFps?: FPSMode, label?: string) => void;
+  grantAdBoostTime: (durationMinutes: number, adsWatched?: number, label?: string) => void;
+  unlockFpsWithAd: (tier: FpsTierKey) => void;
+  isFpsTierUnlocked: (mode: FPSMode) => boolean;
+  resetNetworkInterfaceAndRoute: () => Promise<void>;
 
   // User Payment & Auto-Approval Logic (Firestore Synced)
   submitTransaction: (data: {
@@ -258,41 +358,33 @@ interface BoosterContextType {
   setLanguage: (lang: Language) => void;
 }
 
-// 25 background apps (Default 4 Blocked: YouTube, Instagram, Facebook, Netflix; Snapchat, Messenger & others Allowed)
+// 25 background apps (Default 4 Blocked: YouTube, Instagram, Facebook, Netflix)
 const INITIAL_DATA_HUNGRY_APPS: AppBlockItem[] = [
-  { id: 'app_3', name: 'YouTube', packageName: 'com.google.android.youtube', category: 'Media', isBlocked: true, blockedDataMb: 45.0, iconName: 'youtube' },
-  { id: 'app_4', name: 'Instagram', packageName: 'com.instagram.android', category: 'Social', isBlocked: true, blockedDataMb: 32.5, iconName: 'instagram' },
-  { id: 'app_5', name: 'Facebook', packageName: 'com.facebook.katana', category: 'Social', isBlocked: true, blockedDataMb: 26.5, iconName: 'facebook' },
-  { id: 'app_6', name: 'Netflix', packageName: 'com.netflix.mediaclient', category: 'Media', isBlocked: true, blockedDataMb: 21.0, iconName: 'netflix' },
-  { id: 'app_7', name: 'Snapchat', packageName: 'com.snapchat.android', category: 'Social', isBlocked: false, blockedDataMb: 19.5, iconName: 'snapchat' },
-  { id: 'app_8', name: 'Messenger', packageName: 'com.facebook.orca', category: 'Chat', isBlocked: false, blockedDataMb: 18.2, iconName: 'messenger' },
-  { id: 'app_1', name: 'WhatsApp', packageName: 'com.whatsapp', category: 'Social', isBlocked: false, blockedDataMb: 68.5, iconName: 'whatsapp' },
-  { id: 'app_2', name: 'TikTok', packageName: 'com.zhiliaoapp.musically', category: 'Video', isBlocked: false, blockedDataMb: 52.0, iconName: 'tiktok' },
-  { id: 'app_9', name: 'Chrome', packageName: 'com.android.chrome', category: 'Browser', isBlocked: false, blockedDataMb: 16.4, iconName: 'chrome' },
-  { id: 'app_10', name: 'Spotify', packageName: 'com.spotify.music', category: 'Audio', isBlocked: false, blockedDataMb: 15.0, iconName: 'spotify' },
-  { id: 'app_11', name: 'CapCut', packageName: 'com.lemon.lvoverseas', category: 'Video Editor', isBlocked: false, blockedDataMb: 14.1, iconName: 'capcut' },
-  { id: 'app_12', name: 'ShareIt', packageName: 'com.lenovo.anyshare.gps', category: 'Utility', isBlocked: false, blockedDataMb: 12.8, iconName: 'shareit' },
-  { id: 'app_13', name: 'X (Twitter)', packageName: 'com.twitter.android', category: 'Social', isBlocked: false, blockedDataMb: 11.5, iconName: 'twitter' },
-  { id: 'app_14', name: 'Threads', packageName: 'com.instagram.barcelona', category: 'Social', isBlocked: false, blockedDataMb: 10.2, iconName: 'threads' },
-  { id: 'app_15', name: 'Telegram', packageName: 'org.telegram.messenger', category: 'Chat', isBlocked: false, blockedDataMb: 9.8, iconName: 'telegram' },
-  { id: 'app_16', name: 'Google Photos', packageName: 'com.google.android.apps.photos', category: 'Cloud', isBlocked: false, blockedDataMb: 8.6, iconName: 'photos' },
-  { id: 'app_17', name: 'Google Play Store', packageName: 'com.android.vending', category: 'System', isBlocked: false, blockedDataMb: 7.9, iconName: 'play store' },
-  { id: 'app_18', name: 'Google Play Services', packageName: 'com.google.android.gms', category: 'System', isBlocked: false, blockedDataMb: 7.1, iconName: 'play services' },
-  { id: 'app_19', name: 'Google Maps', packageName: 'com.google.android.apps.maps', category: 'Navigation', isBlocked: false, blockedDataMb: 6.4, iconName: 'maps' },
-  { id: 'app_20', name: 'Pinterest', packageName: 'com.pinterest', category: 'Social', isBlocked: false, blockedDataMb: 5.8, iconName: 'pinterest' },
-  { id: 'app_21', name: 'Gmail', packageName: 'com.google.android.gm', category: 'Productivity', isBlocked: false, blockedDataMb: 5.2, iconName: 'gmail' },
-  { id: 'app_22', name: 'Google Drive', packageName: 'com.google.android.apps.docs', category: 'Cloud', isBlocked: false, blockedDataMb: 4.5, iconName: 'drive' },
-  { id: 'app_23', name: 'Snack Video', packageName: 'com.kwai.video', category: 'Video', isBlocked: false, blockedDataMb: 3.9, iconName: 'snack' },
-  { id: 'app_24', name: 'Likee', packageName: 'video.like', category: 'Video', isBlocked: false, blockedDataMb: 3.1, iconName: 'likee' },
-  { id: 'app_25', name: 'Helo', packageName: 'com.eterno.shortvideos', category: 'Social', isBlocked: false, blockedDataMb: 2.4, iconName: 'helo' },
-];
-
-const RAW_GAMES: GameItem[] = [
-  { id: 'g1', name: 'PUBG Mobile', packageName: 'com.tencent.ig', genre: 'Battle Royale', iconColor: '#f59e0b' },
-  { id: 'g2', name: 'Free Fire', packageName: 'com.dts.freefireth', genre: 'Action Survival', iconColor: '#ef4444' },
-  { id: 'g3', name: 'Free Fire MAX', packageName: 'com.dts.freefiremax', genre: 'Ultra Survival', iconColor: '#8b5cf6' },
-  { id: 'g4', name: 'Call of Duty: Mobile', packageName: 'com.activision.callofduty.shooter', genre: 'Tactical FPS', iconColor: '#06b6d4' },
-  { id: 'g5', name: 'BGMI', packageName: 'com.pubg.imobile', genre: 'Battle Royale', iconColor: '#10b981' },
+  { id: 'app_3', name: 'YouTube', packageName: 'com.google.android.youtube', category: 'Entertainment', isBlocked: true, blockedDataMb: 45.0, iconName: 'youtube', source: 'catalog' },
+  { id: 'app_4', name: 'Instagram', packageName: 'com.instagram.android', category: 'Social', isBlocked: true, blockedDataMb: 32.5, iconName: 'instagram', source: 'catalog' },
+  { id: 'app_5', name: 'Facebook', packageName: 'com.facebook.katana', category: 'Social', isBlocked: true, blockedDataMb: 26.5, iconName: 'facebook', source: 'catalog' },
+  { id: 'app_6', name: 'Netflix', packageName: 'com.netflix.mediaclient', category: 'Entertainment', isBlocked: true, blockedDataMb: 21.0, iconName: 'netflix', source: 'catalog' },
+  { id: 'app_7', name: 'Snapchat', packageName: 'com.snapchat.android', category: 'Social', isBlocked: false, blockedDataMb: 19.5, iconName: 'snapchat', source: 'catalog' },
+  { id: 'app_8', name: 'Messenger', packageName: 'com.facebook.orca', category: 'Social', isBlocked: false, blockedDataMb: 18.2, iconName: 'messenger', source: 'catalog' },
+  { id: 'app_1', name: 'WhatsApp', packageName: 'com.whatsapp', category: 'Social', isBlocked: false, blockedDataMb: 68.5, iconName: 'whatsapp', source: 'catalog' },
+  { id: 'app_2', name: 'TikTok', packageName: 'com.zhiliaoapp.musically', category: 'Entertainment', isBlocked: false, blockedDataMb: 52.0, iconName: 'tiktok', source: 'catalog' },
+  { id: 'app_9', name: 'Chrome', packageName: 'com.android.chrome', category: 'Browsers', isBlocked: false, blockedDataMb: 16.4, iconName: 'chrome', source: 'catalog' },
+  { id: 'app_10', name: 'Spotify', packageName: 'com.spotify.music', category: 'Entertainment', isBlocked: false, blockedDataMb: 15.0, iconName: 'spotify', source: 'catalog' },
+  { id: 'app_11', name: 'CapCut', packageName: 'com.lemon.lvoverseas', category: 'Tools', isBlocked: false, blockedDataMb: 14.1, iconName: 'capcut', source: 'catalog' },
+  { id: 'app_12', name: 'ShareIt', packageName: 'com.lenovo.anyshare.gps', category: 'Tools', isBlocked: false, blockedDataMb: 12.8, iconName: 'shareit', source: 'catalog' },
+  { id: 'app_13', name: 'X (Twitter)', packageName: 'com.twitter.android', category: 'Social', isBlocked: false, blockedDataMb: 11.5, iconName: 'twitter', source: 'catalog' },
+  { id: 'app_14', name: 'Threads', packageName: 'com.instagram.barcelona', category: 'Social', isBlocked: false, blockedDataMb: 10.2, iconName: 'threads', source: 'catalog' },
+  { id: 'app_15', name: 'Telegram', packageName: 'org.telegram.messenger', category: 'Social', isBlocked: false, blockedDataMb: 9.8, iconName: 'telegram', source: 'catalog' },
+  { id: 'app_16', name: 'Google Photos', packageName: 'com.google.android.apps.photos', category: 'Tools', isBlocked: false, blockedDataMb: 8.6, iconName: 'photos', source: 'catalog' },
+  { id: 'app_17', name: 'Google Play Store', packageName: 'com.android.vending', category: 'System', isBlocked: false, blockedDataMb: 7.9, iconName: 'play store', isSystem: true, source: 'catalog' },
+  { id: 'app_18', name: 'Google Play Services', packageName: 'com.google.android.gms', category: 'System', isBlocked: false, blockedDataMb: 7.1, iconName: 'play services', isSystem: true, source: 'catalog' },
+  { id: 'app_19', name: 'Google Maps', packageName: 'com.google.android.apps.maps', category: 'Tools', isBlocked: false, blockedDataMb: 6.4, iconName: 'maps', source: 'catalog' },
+  { id: 'app_20', name: 'Pinterest', packageName: 'com.pinterest', category: 'Social', isBlocked: false, blockedDataMb: 5.8, iconName: 'pinterest', source: 'catalog' },
+  { id: 'app_21', name: 'Gmail', packageName: 'com.google.android.gm', category: 'Tools', isBlocked: false, blockedDataMb: 5.2, iconName: 'gmail', source: 'catalog' },
+  { id: 'app_22', name: 'Google Drive', packageName: 'com.google.android.apps.docs', category: 'Tools', isBlocked: false, blockedDataMb: 4.5, iconName: 'drive', source: 'catalog' },
+  { id: 'app_23', name: 'Snack Video', packageName: 'com.kwai.video', category: 'Entertainment', isBlocked: false, blockedDataMb: 3.9, iconName: 'snack', source: 'catalog' },
+  { id: 'app_24', name: 'Likee', packageName: 'video.like', category: 'Entertainment', isBlocked: false, blockedDataMb: 3.1, iconName: 'likee', source: 'catalog' },
+  { id: 'app_25', name: 'Helo', packageName: 'com.eterno.shortvideos', category: 'Social', isBlocked: false, blockedDataMb: 2.4, iconName: 'helo', source: 'catalog' },
 ];
 
 const deduplicateGames = (games: GameItem[]): GameItem[] => {
@@ -304,75 +396,21 @@ const deduplicateGames = (games: GameItem[]): GameItem[] => {
   });
 };
 
-const INITIAL_GAMES = deduplicateGames(RAW_GAMES);
+const INITIAL_GAMES = deduplicateGames(GLOBAL_GAMES_CATALOG);
 
-const PACKAGES: ProPackage[] = [
-  { 
-    id: 'pkg_1d', 
-    name: 'PKG 1 Day', 
-    durationLabel: '1 Day Premium Access', 
-    durationDays: 1, 
-    pricePkr: 80, 
-    originalPricePkr: 120,
-    perks: ['Device-Best FPS Optimizer', 'Block VPN Firewall', 'RAM Cleaner'] 
-  },
-  { 
-    id: 'pkg_3d', 
-    name: 'PKG 3 Days', 
-    durationLabel: '3 Days Premium Access', 
-    durationDays: 3, 
-    pricePkr: 120, 
-    originalPricePkr: 180,
-    perks: ['Device-Best FPS Optimizer', 'Block VPN Firewall', 'RAM Cleaner', 'Ping Route Optimizer'] 
-  },
-  { 
-    id: 'pkg_7d', 
-    name: 'PKG 7 Days', 
-    durationLabel: '7 Days Premium Access', 
-    durationDays: 7, 
-    pricePkr: 200, 
-    originalPricePkr: 400, 
-    badge: 'BEST VALUE', 
-    isPopular: true, 
-    perks: ['Device-Best FPS Optimizer', 'Graphics Tuning Profile', 'Ping Route Optimizer', 'Priority VPN Tunnel'] 
-  },
-  { 
-    id: 'pkg_15d', 
-    name: 'PKG 15 Days', 
-    durationLabel: '15 Days Premium Access', 
-    durationDays: 15, 
-    pricePkr: 320, 
-    originalPricePkr: 500, 
-    perks: ['15 Days PRO Optimization', 'Vulkan Render Cache', 'Low-Jitter Routing', 'Esports Profile'] 
-  },
-  { 
-    id: 'pkg_30d', 
-    name: 'PKG 30 Days', 
-    durationLabel: '30 Days Premium', 
-    durationDays: 30, 
-    pricePkr: 800, 
-    originalPricePkr: 1200, 
-    isVip: true, 
-    perks: ['30 Days PRO Optimization', 'Vulkan Render Cache', 'Priority Game Engine', '24/7 Gaming Support'] 
-  },
-  { 
-    id: 'pkg_vip_599', 
-    name: 'PKG VIP 30 Days', 
-    durationLabel: 'VIP Edition', 
-    durationDays: 30, 
-    pricePkr: 999, 
-    originalPricePkr: 1500,
-    isVip: true, 
-    perks: ['Auto Ping Route Optimizer', 'Auto Boost On Launch', 'Zero Latency Profiles', 'Priority Server Profiles'] 
-  },
-];
+const DEFAULT_FPS_UNLOCKS: Record<FpsTierKey, FpsUnlockStatus> = {
+  '60': { unlocked: false, unlockedAtMs: null, expiresAtMs: null, adsWatched: 0 },
+  '90': { unlocked: false, unlockedAtMs: null, expiresAtMs: null, adsWatched: 0 },
+  '120': { unlocked: false, unlockedAtMs: null, expiresAtMs: null, adsWatched: 0 },
+};
 
-// FREE INSTANT BOOST TIMER OPTIONS (NO ADS REQUIRED)
+const PACKAGES: ProPackage[] = [];
+
+// WATCH AD -> EARN BOOST TIME OPTIONS
 const AD_OPTIONS: AdRewardOption[] = [
-  { id: 'ad_30m_free', adsCount: 0, durationMinutes: 30, label: 'Quick Boost (60 FPS) • 30 Min Free', badge: 'RECOMMENDED', isRecommended: true },
-  { id: 'ad_30m', adsCount: 0, durationMinutes: 30, label: 'Power Boost (60 FPS) • 30 Min Free', badge: 'FREE' },
-  { id: 'ad_60m', adsCount: 0, durationMinutes: 60, label: 'Turbo Boost (90 FPS) • 60 Min Free', badge: 'FREE' },
-  { id: 'ad_120m', adsCount: 0, durationMinutes: 120, label: 'Extreme Boost (Device Max FPS) • 120 Min', badge: 'VIP FREE' },
+  { id: 'ad_30m', adsCount: 1, durationMinutes: 30, label: 'Watch 1 Ad -> +30 Min Boost', badge: 'RECOMMENDED', isRecommended: true },
+  { id: 'ad_60m', adsCount: 2, durationMinutes: 60, label: 'Watch 2 Ads -> +60 Min Boost', badge: 'POPULAR' },
+  { id: 'ad_120m', adsCount: 3, durationMinutes: 120, label: 'Watch 3 Ads -> +120 Min Boost', badge: 'MAX TIME' },
 ];
 
 const BoosterContext = createContext<BoosterContextType | undefined>(undefined);
@@ -380,10 +418,40 @@ const BoosterContext = createContext<BoosterContextType | undefined>(undefined);
 export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('home');
   const [appsList, setAppsList] = useState<AppBlockItem[]>(() => {
-    const saved = localStorage.getItem('fps_booster_apps_v6');
-    return saved ? JSON.parse(saved) : INITIAL_DATA_HUNGRY_APPS;
+    try {
+      const saved = localStorage.getItem('fps_booster_apps_v6');
+      if (saved) {
+        const parsed = JSON.parse(saved) as AppBlockItem[];
+        return parsed.map((a) => ({
+          ...a,
+          category: categorizePackageName(a.packageName, a.name, a.isSystem, a.isGame),
+          source: a.source || 'catalog',
+        }));
+      }
+    } catch {}
+    return INITIAL_DATA_HUNGRY_APPS;
   });
-  const [gamesList] = useState<GameItem[]>(INITIAL_GAMES);
+  const [gamesList, setGamesList] = useState<GameItem[]>(INITIAL_GAMES);
+  const [isRefreshingPackages, setIsRefreshingPackages] = useState<boolean>(false);
+  const [catalogSource, setCatalogSource] = useState<'android_packagemanager' | 'catalog'>(() =>
+    isNativeAndroidRuntime() ? 'android_packagemanager' : 'catalog'
+  );
+  const [favoriteGamePackages, setFavoriteGamePackages] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('fps_booster_favorite_games_v1');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [recentGamePackages, setRecentGamePackages] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('fps_booster_recent_games_v1');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
   const [activeGame, setActiveGame] = useState<GameItem | null>(null);
 
   // User Anonymous Auth ID
@@ -391,7 +459,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return localStorage.getItem('fps_booster_user_uid') || `user_${Math.random().toString(36).substring(2, 9)}`;
   });
 
-  // AUTO-APPROVE toggle (Default ON as requested)
+  // Diagnostics Admin toggle
   const [autoApproveEnabled, setAutoApproveEnabled] = useState<boolean>(() => {
     const saved = localStorage.getItem('fps_booster_auto_approve');
     return saved !== null ? JSON.parse(saved) : true;
@@ -399,37 +467,8 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [snackBarMessage, setSnackBarMessage] = useState<string | null>(null);
 
-  // Transactions list (synced live with Firestore /payments)
-  const [transactions, setTransactions] = useState<TransactionProof[]>([
-    {
-      id: 'TX-829104',
-      userId: 'user_hamza',
-      packageId: 'pkg_vip_599',
-      packageName: 'PKG VIP 30 Days',
-      amount: 599,
-      method: 'jazzcash',
-      tid: '94827103841',
-      senderName: 'Hamza Khan',
-      phone: '03193191407',
-      status: 'approved',
-      autoApproved: true,
-      submittedAt: Date.now() - 3600000,
-      reviewedAt: Date.now() - 3500000,
-    },
-    {
-      id: 'TX-829105',
-      userId: 'user_bilal',
-      packageId: 'pkg_7d',
-      packageName: 'PKG 7 Days',
-      amount: 200,
-      method: 'easypaisa',
-      tid: '73910482911',
-      senderName: 'Bilal Ahmed',
-      phone: '03193191407',
-      status: 'pending',
-      submittedAt: Date.now() - 1200000,
-    }
-  ]);
+  // Cloud log records (synced when applicable)
+  const [transactions, setTransactions] = useState<TransactionProof[]>([]);
 
   const [walletTransfers, setWalletTransfers] = useState<AdminWalletTransfer[]>(() => {
     const saved = localStorage.getItem('fps_booster_wallet_transfers_v4');
@@ -439,25 +478,63 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [userPaymentNotification, setUserPaymentNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   const [logs, setLogs] = useState<string[]>([
-    'System ready: HyperGaming Engine 3.2 online',
+    'System ready: Global Game Booster Engine online',
     'Firebase Firestore initialized: Online sync connected',
-    'Free Boost Mode: Instant one-tap booster active',
-    'Payment Gateways: JazzCash, Easypaisa, Binance',
+    'Ad-Powered Boost Gate active: Watch Ad to start Boost countdown',
+    'Fast DNS 1.1.1.1 & Direct Ping Guard ready',
   ]);
 
   // Initial State loaded from localStorage or default
   const [state, setState] = useState<BoosterState>(() => {
+    const now = Date.now();
     const saved = localStorage.getItem('fps_booster_state_v4');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed.proExpiresAt && parsed.proExpiresAt < Date.now()) {
-          parsed.isPro = false;
-          parsed.proTier = 'free';
-          parsed.proExpiresAt = null;
-        }
+        parsed.isPro = false;
+        parsed.proTier = 'free';
+        parsed.proExpiresAt = null;
         if (!parsed.activeProfile) {
           parsed.activeProfile = 'SMART_BOOST';
+        }
+        if (typeof parsed.batterySaverMode !== 'boolean') {
+          parsed.batterySaverMode = false;
+        }
+        if (!parsed.selectedBoostMinutes) {
+          parsed.selectedBoostMinutes = 30;
+        }
+        const savedExpiresAt =
+          typeof parsed.boostExpiresAtMs === 'number' && parsed.boostExpiresAtMs > now
+            ? parsed.boostExpiresAtMs
+            : null;
+        const remainingFromExpiry = savedExpiresAt
+          ? Math.max(0, Math.ceil((savedExpiresAt - now) / 1000))
+          : 0;
+        parsed.boostExpiresAtMs = savedExpiresAt;
+        parsed.boostTimeRemainingSec = remainingFromExpiry;
+        delete parsed.earnedBoostSeconds;
+        if (!savedExpiresAt || remainingFromExpiry <= 0) {
+          parsed.isBoosting = false;
+          parsed.isGamingModeOn = false;
+          parsed.isVpnActive = false;
+          parsed.activeSessionStartedAtMs = null;
+        }
+        const normalizedUnlocks: Record<FpsTierKey, FpsUnlockStatus> = {
+          '60': { ...DEFAULT_FPS_UNLOCKS['60'] },
+          '90': { ...DEFAULT_FPS_UNLOCKS['90'] },
+          '120': { ...DEFAULT_FPS_UNLOCKS['120'] },
+        };
+        if (parsed.fpsUnlocks) {
+          (['60', '90', '120'] as FpsTierKey[]).forEach((tier) => {
+            const entry = parsed.fpsUnlocks[tier];
+            if (entry && entry.unlocked && (!entry.expiresAtMs || entry.expiresAtMs > now)) {
+              normalizedUnlocks[tier] = entry;
+            }
+          });
+        }
+        parsed.fpsUnlocks = normalizedUnlocks;
+        if (typeof parsed.totalAdsWatched !== 'number') {
+          parsed.totalAdsWatched = 0;
         }
         parsed.maxHardwareHz = RefreshRateDetector.getDetectedMaxHz();
         return parsed;
@@ -476,7 +553,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       temperatureC: 34.2,
       batteryLevel: 88,
       isBatteryCharging: false,
-      pingMs: 58,
+      pingMs: 0,
       isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
       storage: {
         freeGb: 28.4,
@@ -486,8 +563,17 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         isNativeStorage: false,
       },
       isBoosting: false,
+      boostExpiresAtMs: null,
+      activeSessionStartedAtMs: null,
       boostTimeRemainingSec: 0,
       boostDurationTotalSec: 0,
+      fpsUnlocks: {
+        '60': { ...DEFAULT_FPS_UNLOCKS['60'] },
+        '90': { ...DEFAULT_FPS_UNLOCKS['90'] },
+        '120': { ...DEFAULT_FPS_UNLOCKS['120'] },
+      },
+      selectedBoostMinutes: 30,
+      totalAdsWatched: 0,
       isPro: false,
       proTier: 'free',
       proExpiresAt: null,
@@ -502,6 +588,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       networkOptimizer: true,
       appLock: false,
       soundAndHaptics: true,
+      batterySaverMode: false,
       language: 'en',
     };
   });
@@ -623,29 +710,145 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return {
       enabled: false,
       hasVpnPermission: false,
+      notificationPermissionGranted: true,
       isNativeAndroid: isNativeAndroidRuntime(),
+      connectionState: 'READY',
+      activeTransport: isNativeAndroidRuntime() ? 'CHECKING' : 'WEB_PREVIEW',
+      reconnectCount: 0,
+      lastFailureReason: '',
+      conflictDetected: false,
+      uptimeSec: 0,
+      vpnLayer: 1,
+      firewallLayer: 1,
+      layerStatusNote: 'Dual-Stack Guard Ready',
+      dnsFilterEnabled: true,
+      blockAllNonSelected: true,
       preset: 'custom',
       protectedGamePkg: 'com.tencent.ig',
       protectedGameName: 'PUBG Mobile',
       blockedBytesTotal: 0,
       blockedPacketsCount: 0,
+      blockedTcpPackets: 0,
+      blockedUdpPackets: 0,
+      blockedDnsQueries: 0,
+      blockedIpv4Packets: 0,
+      blockedIpv6Packets: 0,
+      persistentServiceRunning: false,
+      wakeLockActive: false,
+      heartbeatCount: 0,
+      lastHeartbeatAt: 0,
       hasPreviousSnapshot: Boolean(savedSnapshotIds),
       previousSnapshotBlockedIds: savedSnapshotIds,
       previousSnapshotEnabled: savedSnapshotEnabled,
     };
   });
 
+  const [selectedSuperBoostGamePkg, setSelectedSuperBoostGamePkg] = useState<string>(
+    INITIAL_GAMES[0]?.packageName || 'com.tencent.ig'
+  );
+
+  const [superBoost, setSuperBoost] = useState<SuperBoostProgressState>({
+    status: 'idle',
+    currentStepIndex: 0,
+    currentStepLabel: 'Ready to optimize',
+    completedSteps: [],
+    startedAt: null,
+    selectedGamePackage: INITIAL_GAMES[0]?.packageName || 'com.tencent.ig',
+    selectedGameName: INITIAL_GAMES[0]?.name || 'PUBG Mobile',
+    errorMessage: null,
+  });
+
+  const [isBoostDetailsOpen, setIsBoostDetailsOpen] = useState<boolean>(false);
+  const [boostDetailsSummary, setBoostDetailsSummary] = useState<BoostSessionSummary | null>(null);
+  const [permissionFlow, setPermissionFlow] = useState<{
+    isOpen: boolean;
+    currentStep: PermissionFlowStep | null;
+    stepsQueue: PermissionFlowStep[];
+    checklist: PermissionChecklistState;
+    isRequesting: boolean;
+    pendingGame: GameItem | null;
+  }>(() => {
+    let onboarded = false;
+    try {
+      onboarded = localStorage.getItem('fps_booster_perms_onboarded_v1') === '1';
+    } catch {}
+    return {
+      isOpen: false,
+      currentStep: null,
+      stepsQueue: [],
+      checklist: {
+        batteryOptimizationIgnored: onboarded,
+        usageAccessGranted: onboarded,
+        dndAccessGranted: onboarded,
+        notificationGranted: true,
+        vpnGranted: false,
+        onboarded,
+      },
+      isRequesting: false,
+      pendingGame: null,
+    };
+  });
+
+  const masterBoostActive =
+    superBoost.status === 'active' || (state.isBoosting && state.isGamingModeOn);
+
+  const [recoveryHistory, setRecoveryHistory] = useState<RecoveryLogItem[]>([
+    {
+      id: 'rec_init',
+      timestamp: Date.now(),
+      category: 'session',
+      severity: 'info',
+      message: 'Super Boost Watchdog initialized (auto-recovery ready)',
+    },
+  ]);
+
+  const addRecoveryLog = useCallback(
+    (
+      category: RecoveryLogItem['category'],
+      severity: RecoveryLogItem['severity'],
+      message: string
+    ) => {
+      setRecoveryHistory((prev) => {
+        if (prev[0] && prev[0].message === message && Date.now() - prev[0].timestamp < 3000) {
+          return prev;
+        }
+        return [
+          {
+            id: `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+            timestamp: Date.now(),
+            category,
+            severity,
+            message,
+          },
+          ...prev.slice(0, 19),
+        ];
+      });
+    },
+    []
+  );
+
   // Network Speed & Stability Diagnostics
   const [networkDiagnostics, setNetworkDiagnostics] = useState<NetworkDiagnosticsState>({
-    pingMs: 58,
-    jitterMs: 1.4,
+    pingMs: 0,
+    jitterMs: 0,
     packetLossPercent: 0.0,
-    downloadMbps: 24.5,
-    uploadMbps: 10.2,
-    stabilityPercent: 98,
-    connectionType: 'WIFI',
+    downloadMbps: 0,
+    uploadMbps: 0,
+    stabilityPercent: 100,
+    connectionType: 'CHECKING',
     isMeasuringSpeed: false,
     lastDiagnosticsAt: null,
+    stabilityStatus: 'good',
+    stabilityReason: 'Measuring real connection stability...',
+    vpnOverheadDetected: false,
+    routingMode: 'DIRECT_PHYSICAL',
+    targetAchievable20to40: false,
+    wifiBand: null,
+    autoOptimizeEnabled: true,
+    lastOptimizedAt: null,
+    lastOptimizationAction: null,
+    isRouteLocked: false,
+    fastDnsServer: '1.1.1.1 / 1.0.0.1',
   });
 
   // 8-Step Smart Gaming Session State
@@ -704,42 +907,16 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       syncUserToFirestore({
         userId: activeUid,
-        name: auth.currentUser?.displayName || 'Test User',
-        isPro: state.isPro,
-        proExpiry: state.proExpiresAt,
-        activeFps: state.activeFps,
+        name: auth.currentUser?.displayName || 'Gamer',
+        isPro: false,
+        proExpiry: null,
+        activeFps: mapFpsForFirestore(state.activeFps, state.maxHardwareHz),
         activeProfile: state.activeProfile,
       });
 
       const userRef = doc(db, 'users', activeUid);
-      unsubUser = onSnapshot(userRef, (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (data.isPro !== undefined) {
-            setState(prev => {
-              if (prev.isPro !== data.isPro) {
-                if (data.isPro) {
-                  sound.playSuccess();
-                  setSnackBarMessage('Payment Verified - PRO Activated!');
-                  setUserPaymentNotification({
-                    message: 'PRO Activated! Payment Approved by Admin.',
-                    type: 'success'
-                  });
-                }
-                return {
-                  ...prev,
-                  isPro: data.isPro,
-                  proExpiresAt: data.proExpiry || null,
-                  activeFps: data.isPro ? '120' : prev.activeFps,
-                  isBoosting: data.isPro ? true : prev.isBoosting,
-                  boostTimeRemainingSec: data.isPro ? 7200 : prev.boostTimeRemainingSec,
-                  boostDurationTotalSec: data.isPro ? 7200 : prev.boostDurationTotalSec,
-                };
-              }
-              return prev;
-            });
-          }
-        }
+      unsubUser = onSnapshot(userRef, () => {
+        // 100% Free Ad-Supported Edition
       }, (err) => {
         console.warn('Firestore user onSnapshot:', err);
       });
@@ -753,9 +930,9 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
             liveList.push({
               id: d.id || docSnap.id,
               userId: d.userId,
-              packageId: d.packageId || 'pkg_vip_599',
-              packageName: d.packageName || 'PKG VIP 30 Days',
-              amount: d.amount || 599,
+              packageId: d.packageId || 'free_ad_boost',
+              packageName: d.packageName || 'Ad Boost Session',
+              amount: d.amount || 0,
               method: d.method as PaymentMethodType,
               tid: d.tid,
               senderName: d.name || d.senderName || 'Gamer',
@@ -807,106 +984,345 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, []);
 
-  // Unified Real-Time Ping Monitor State (Single Ping Source for Home & Gaming Dashboard)
+  // Unified Real-Time Ping Monitor & Optimization State
   const [serverRegions, setServerRegions] = useState<ServerRegionPing[]>(INITIAL_SERVER_REGIONS);
-  const [selectedRegionId, setSelectedRegionId] = useState<string>('asia-south');
+  const [selectedRegionId, setSelectedRegionId] = useState<string>('direct-anycast');
   const [isProbing, setIsProbing] = useState<boolean>(false);
-  const [lastProbedTime, setLastProbedTime] = useState<string>('Just now');
+  const [lastProbedTime, setLastProbedTime] = useState<string>('Probing...');
 
-  const runPingProbe = useCallback(async () => {
-    if (typeof document !== 'undefined' && document.hidden) return;
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      setState(prev => ({ ...prev, isOnline: false, pingMs: 0 }));
-      setLastProbedTime('Offline');
-      return;
-    }
+  const isProbingRef = useRef(false);
+  const selectedRegionIdRef = useRef(selectedRegionId);
+  selectedRegionIdRef.current = selectedRegionId;
+  const serverRegionsRef = useRef(serverRegions);
+  serverRegionsRef.current = serverRegions;
+  const networkDiagnosticsRef = useRef(networkDiagnostics);
+  networkDiagnosticsRef.current = networkDiagnostics;
+  const lastAutoOptimizeMsRef = useRef<number>(0);
+  const lastLowNoiseLogMsRef = useRef<number>(0);
 
-    setIsProbing(true);
+  const runPingProbeInternal = useCallback(
+    async (
+      onlyActiveRegion: boolean = false
+    ): Promise<{ measured: ServerRegionPing[]; best: ServerRegionPing | null; externalVpn: boolean }> => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        setState((prev) => ({ ...prev, isOnline: false, pingMs: 0 }));
+        setNetworkDiagnostics((prev) => ({
+          ...prev,
+          pingMs: 0,
+          packetLossPercent: 100,
+          stabilityPercent: 0,
+          connectionType: 'OFFLINE',
+          stabilityStatus: 'offline',
+          stabilityReason: 'Device offline',
+          targetAchievable20to40: false,
+        }));
+        setLastProbedTime('Offline');
+        return { measured: [], best: null, externalVpn: false };
+      }
 
-    const updatedRegions = await Promise.all(
-      INITIAL_SERVER_REGIONS.map(async (region): Promise<ServerRegionPing> => {
-        const startTime = performance.now();
-        let measuredPing = region.baseLatencyMs;
-        let reachable = false;
+      const targetList = onlyActiveRegion
+        ? INITIAL_SERVER_REGIONS.filter((r) => r.id === selectedRegionIdRef.current)
+        : INITIAL_SERVER_REGIONS;
 
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 1600);
+      let externalVpnDetected = false;
+      let measuredList: ServerRegionPing[] = [];
 
-          await fetch(region.url, {
-            method: 'HEAD',
-            mode: 'no-cors',
-            cache: 'no-store',
-            signal: controller.signal,
+      if (isNativeAndroidRuntime()) {
+        const nativeRes = await probeNativeNetworkLatency(targetList.map((r) => r.host));
+        if (nativeRes && nativeRes.results.length > 0) {
+          externalVpnDetected = Boolean(nativeRes.externalVpnDetected);
+          measuredList = targetList.map((region) => {
+            const match = nativeRes.results.find((item) => item.host === region.host);
+            const reachable = Boolean(match && match.reachable && match.pingMs > 0);
+            const pingMs = reachable && match ? match.pingMs : 0;
+            const jitter = match ? match.jitterMs : 0;
+            const loss = match ? match.packetLossPercent : 100;
+            const status: ServerRegionPing['status'] = !reachable
+              ? 'moderate'
+              : pingMs <= 40
+              ? 'optimal'
+              : pingMs <= 75
+              ? 'good'
+              : 'moderate';
+            return {
+              ...region,
+              currentPingMs: pingMs,
+              jitterMs: jitter,
+              packetLossPercent: loss,
+              reachable,
+              status,
+            };
           });
-
-          clearTimeout(timeout);
-          const elapsed = Math.round(performance.now() - startTime);
-          measuredPing = Math.max(12, Math.min(elapsed, 450));
-          reachable = true;
-        } catch {
-          measuredPing = region.baseLatencyMs;
         }
+      }
 
-        const jitterSpread = reachable
-          ? Number(Math.max(0.5, Math.abs(measuredPing - region.baseLatencyMs) * 0.15).toFixed(1))
-          : region.jitterMs;
+      if (measuredList.length === 0) {
+        measuredList = await Promise.all(
+          targetList.map(async (region): Promise<ServerRegionPing> => {
+            const rtt = await measureWarmEndpointRtt(region.url, 1450);
+            const status: ServerRegionPing['status'] = !rtt.reachable
+              ? 'moderate'
+              : rtt.pingMs <= 40
+              ? 'optimal'
+              : rtt.pingMs <= 75
+              ? 'good'
+              : 'moderate';
+            return {
+              ...region,
+              currentPingMs: rtt.reachable ? rtt.pingMs : 0,
+              jitterMs: rtt.jitterMs,
+              packetLossPercent: rtt.packetLossPercent,
+              reachable: rtt.reachable,
+              status,
+            };
+          })
+        );
+      }
 
-        const status: ServerRegionPing['status'] = !reachable
-          ? 'moderate'
-          : measuredPing <= 50
-          ? 'optimal'
-          : measuredPing <= 100
-          ? 'good'
-          : 'moderate';
+      const reachableList = measuredList.filter((r) => r.reachable !== false && r.currentPingMs > 0);
+      const bestReachable =
+        reachableList.length > 0
+          ? reachableList.reduce(
+              (min, r) => (r.currentPingMs < min.currentPingMs ? r : min),
+              reachableList[0]
+            )
+          : null;
 
-        return {
-          ...region,
-          currentPingMs: measuredPing,
-          jitterMs: jitterSpread,
-          packetLossPercent: reachable ? 0 : 100,
-          status,
-        };
-      })
-    );
+      if (onlyActiveRegion && measuredList.length === 1) {
+        const updatedSingle = measuredList[0];
+        setServerRegions((prev) =>
+          prev.map((r) => (r.id === updatedSingle.id ? updatedSingle : r))
+        );
+        if (updatedSingle.reachable !== false && updatedSingle.currentPingMs > 0) {
+          setState((prev) => ({
+            ...prev,
+            isOnline: true,
+            pingMs: updatedSingle.currentPingMs,
+          }));
+        }
+      } else {
+        setServerRegions(measuredList);
+        if (bestReachable) {
+          setSelectedRegionId(bestReachable.id);
+          setState((prev) => ({
+            ...prev,
+            isOnline: true,
+            pingMs: bestReachable.currentPingMs,
+          }));
+        }
+      }
 
-    const lowestRegion = updatedRegions.reduce(
-      (min, r) => (r.currentPingMs < min.currentPingMs ? r : min),
-      updatedRegions[0]
-    );
+      const activeSnapshot =
+        onlyActiveRegion && measuredList[0]
+          ? measuredList[0]
+          : bestReachable || measuredList[0];
 
-    setServerRegions(updatedRegions);
-    setSelectedRegionId(lowestRegion.id);
-    setState(prev => ({
-      ...prev,
-      isOnline: true,
-      pingMs: lowestRegion.currentPingMs,
-    }));
-    setIsProbing(false);
-    setLastProbedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-  }, []);
+      if (activeSnapshot) {
+        setNetworkDiagnostics((prev) => {
+          const effectivePing =
+            activeSnapshot.currentPingMs > 0 ? activeSnapshot.currentPingMs : prev.pingMs;
+          const stability = classifyConnectionStability({
+            isOnline: typeof navigator === 'undefined' || navigator.onLine !== false,
+            pingMs: effectivePing,
+            jitterMs: activeSnapshot.jitterMs,
+            packetLossPercent: activeSnapshot.packetLossPercent,
+            connectionType: prev.connectionType || 'WEB',
+            vpnOverheadDetected: externalVpnDetected || Boolean(prev.vpnOverheadDetected),
+            localFirewallBypassActive: Boolean(firewallState.enabled && isNativeAndroidRuntime()),
+            wifiRssiDbm: prev.wifiRssiDbm,
+            wifiLinkMbps: prev.wifiLinkMbps,
+            wifiBand: prev.wifiBand,
+          });
+          return {
+            ...prev,
+            pingMs: effectivePing,
+            jitterMs: activeSnapshot.jitterMs,
+            packetLossPercent: activeSnapshot.packetLossPercent,
+            stabilityPercent: stability.stabilityPercent,
+            stabilityStatus: stability.stabilityStatus,
+            stabilityReason: stability.stabilityReason,
+            routingMode: stability.routingMode,
+            targetAchievable20to40: stability.targetAchievable20to40,
+            vpnOverheadDetected: externalVpnDetected || prev.vpnOverheadDetected,
+          };
+        });
+      }
+
+      setLastProbedTime(
+        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      );
+      return { measured: measuredList, best: bestReachable, externalVpn: externalVpnDetected };
+    },
+    [firewallState.enabled]
+  );
+
+  const optimizeNetworkRoute = useCallback(
+    async (reason: string = 'Manual Route Optimization') => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        setSnackBarMessage('Device Offline — Reconnect Wi-Fi or Mobile Data');
+        return;
+      }
+
+      const prevSelectedId = selectedRegionIdRef.current;
+      const prevRegion =
+        serverRegionsRef.current.find((r) => r.id === prevSelectedId) || serverRegionsRef.current[0];
+      const beforePing = prevRegion?.currentPingMs || networkDiagnosticsRef.current.pingMs;
+
+      // Suppress non-essential background cloud sync while optimizing network stability
+      if (typeof window !== 'undefined') {
+        (window as unknown as Record<string, unknown>)['__FPS_LOW_NETWORK_NOISE__'] = true;
+      }
+
+      // If Boost is active, re-sync native background app blocking & trim noisy background processes
+      if (latestStateRef.current.isBoosting) {
+        const curBlocked = filterSafeBlockedPackages(appsList, firewallState.protectedGamePkg);
+        const curAllowed = filterAllowedPackages(appsList, firewallState.protectedGamePkg);
+        trimNativeBackgroundMemory(curBlocked, firewallState.protectedGamePkg).catch(() => {});
+        if (isNativeAndroidRuntime() && firewallState.enabled) {
+          GamingFirewallNative.startFirewall({
+            blockedPackages: curBlocked,
+            allowedPackages: curAllowed,
+            blockAllNonSelected: firewallState.blockAllNonSelected !== false,
+            boostExpiresAtMs: latestStateRef.current.boostExpiresAtMs || undefined,
+            protectedGamePackage: firewallState.protectedGamePkg,
+            dnsFilter: firewallState.dnsFilterEnabled,
+          }).catch(() => {});
+        }
+      }
+
+      const { best, externalVpn } = await runPingProbeInternal(false);
+      const afterPing = best?.currentPingMs || beforePing;
+      const bestName = best?.name || prevRegion?.name || 'Direct Edge';
+      const curDiag = networkDiagnosticsRef.current;
+
+      let actionText = '';
+      if (externalVpn) {
+        actionText = `External VPN adds hop latency (${afterPing}ms) — disconnect external VPN for direct routing`;
+        addRecoveryLog('network', 'warning', actionText);
+      } else if (curDiag.stabilityStatus === 'unstable_wifi' || curDiag.stabilityStatus === 'unstable_mobile' || curDiag.packetLossPercent > 0) {
+        actionText = `Network unstable (${afterPing}ms, ${curDiag.packetLossPercent}% loss) — switch Wi-Fi ↔ Cellular if drops continue`;
+        addRecoveryLog('network', 'warning', actionText);
+        if (reason !== 'Ping > 40ms Guard') {
+          setSnackBarMessage('Unstable network detected — consider switching Wi-Fi ↔ Cellular');
+        }
+      } else if (best && best.id !== prevSelectedId && beforePing > 0 && afterPing < beforePing) {
+        actionText = `Switched to fastest direct route ${bestName}: ${beforePing}ms → ${afterPing}ms (0ms VPN hop)`;
+        addRecoveryLog('network', 'info', actionText);
+      } else if (afterPing > 0 && afterPing <= 40) {
+        actionText = `20–40ms target achieved (${afterPing}ms) on direct route ${bestName} · DNS 1.1.1.1`;
+        addRecoveryLog('network', 'info', actionText);
+      } else {
+        actionText = `Verified direct route ${bestName} (${afterPing}ms actual ISP latency) · BG noise blocked`;
+        if (Date.now() - lastLowNoiseLogMsRef.current > 30_000) {
+          lastLowNoiseLogMsRef.current = Date.now();
+          addRecoveryLog('network', 'info', actionText);
+        }
+      }
+
+      setNetworkDiagnostics((prev) => ({
+        ...prev,
+        lastOptimizedAt: Date.now(),
+        lastOptimizationAction: actionText,
+        fastDnsServer: '1.1.1.1 / 1.0.0.1',
+      }));
+      addLog(`Net Optimizer (${reason}): ${actionText}`);
+      if (reason === 'Manual Route Optimization' || reason === 'Manual Route Reset') {
+        setSnackBarMessage(
+          externalVpn
+            ? 'External VPN Detected — Disable for Lower Ping'
+            : curDiag.packetLossPercent > 0
+            ? `Route Reset (${afterPing}ms) — Switch Wi-Fi ↔ Cellular if unstable`
+            : `Route Verified: ${bestName} (${afterPing}ms)`
+        );
+      }
+    },
+    [addRecoveryLog, appsList, firewallState.enabled, firewallState.protectedGamePkg, runPingProbeInternal]
+  );
+
+  const resetNetworkInterfaceAndRoute = useCallback(async () => {
+    await optimizeNetworkRoute('Manual Route Reset');
+  }, [optimizeNetworkRoute]);
+
+  const runPingProbe = useCallback(
+    async (onlyActiveRegion: boolean = false) => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (isProbingRef.current) return;
+
+      isProbingRef.current = true;
+      setIsProbing(true);
+      try {
+        const res = await runPingProbeInternal(onlyActiveRegion);
+        const curDiag = networkDiagnosticsRef.current;
+        const activeSnap =
+          onlyActiveRegion && res.measured[0]
+            ? res.measured[0]
+            : res.best || res.measured[0];
+
+        // Automatic network optimization every time ping crosses 40ms threshold or packet loss/jitter spikes
+        const isBoostedNow = Boolean(latestStateRef.current.isBoosting || latestStateRef.current.isGamingModeOn);
+        const thresholdMs = isBoostedNow ? 40 : 48;
+        const shouldAutoOptimize =
+          curDiag.autoOptimizeEnabled !== false &&
+          onlyActiveRegion &&
+          activeSnap &&
+          ((activeSnap.currentPingMs > thresholdMs && activeSnap.reachable !== false) ||
+            activeSnap.jitterMs >= 15 ||
+            activeSnap.packetLossPercent > 0 ||
+            res.externalVpn);
+
+        if (shouldAutoOptimize && Date.now() - lastAutoOptimizeMsRef.current >= 12_000) {
+          lastAutoOptimizeMsRef.current = Date.now();
+          await optimizeNetworkRoute(isBoostedNow ? 'Ping > 40ms Guard' : 'Auto Spike Guard');
+        }
+      } finally {
+        isProbingRef.current = false;
+        setIsProbing(false);
+      }
+    },
+    [optimizeNetworkRoute, runPingProbeInternal]
+  );
+
+  const toggleAutoOptimizeNetwork = () => {
+    haptics.selection();
+    sound.playClick();
+    setNetworkDiagnostics((prev) => {
+      const next = prev.autoOptimizeEnabled === false;
+      setSnackBarMessage(
+        next ? 'Auto Network Optimizer Enabled' : 'Auto Network Optimizer Paused'
+      );
+      return { ...prev, autoOptimizeEnabled: next };
+    });
+  };
 
   const selectPingRegion = (regionId: string) => {
     const found = serverRegions.find(r => r.id === regionId);
     if (!found) return;
     setSelectedRegionId(found.id);
-    setState(prev => ({
-      ...prev,
-      pingMs: found.currentPingMs,
-    }));
+    if (found.currentPingMs > 0) {
+      setState(prev => ({
+        ...prev,
+        pingMs: found.currentPingMs,
+      }));
+    }
   };
 
   useEffect(() => {
-    runPingProbe();
+    runPingProbe(false);
+    // Strict 2-second live ping monitoring during active Boost session
+    const pingCadenceMs = state.batterySaverMode
+      ? 60000
+      : state.isBoosting || state.isGamingModeOn
+      ? 2000
+      : 18000;
     const interval = setInterval(() => {
       if (typeof document === 'undefined' || !document.hidden) {
-        runPingProbe();
+        runPingProbe(true);
       }
-    }, 10000);
+    }, pingCadenceMs);
 
     const handleOnline = () => {
       setState(prev => ({ ...prev, isOnline: true }));
-      runPingProbe();
+      runPingProbe(false);
     };
     const handleOffline = () => {
       setState(prev => ({ ...prev, isOnline: false, pingMs: 0 }));
@@ -920,18 +1336,56 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [runPingProbe]);
+  }, [runPingProbe, state.batterySaverMode, state.isBoosting, state.isGamingModeOn]);
 
   const activeRegion = serverRegions.find(r => r.id === selectedRegionId) || serverRegions[0];
 
-  // Sync audio mute state cleanly
+  // Sync audio mute & Capacitor haptics state cleanly
   useEffect(() => {
     sound.setMuted(!state.soundAndHaptics);
+    haptics.setEnabled(Boolean(state.soundAndHaptics));
   }, [state.soundAndHaptics]);
 
+  // Sync Battery Saver background throttle flag & native screen brightness
   useEffect(() => {
-    localStorage.setItem('fps_booster_state_v4', JSON.stringify(state));
+    const enabled = Boolean(state.batterySaverMode);
+    if (typeof window !== 'undefined') {
+      (window as unknown as Record<string, unknown>)['__FPS_BATTERY_SAVER__'] = enabled;
+    }
+    applyNativeScreenBrightness(enabled, 0.3).catch(() => {});
+  }, [state.batterySaverMode]);
+
+  // Throttle 1-second timer tick writes, but flush immediately whenever Boost or Expiration changes
+  const lastStatePersistMsRef = useRef<number>(0);
+  const lastCriticalPersistKeyRef = useRef<string>('');
+  const latestPersistStateRef = useRef(state);
+  latestPersistStateRef.current = state;
+
+  useEffect(() => {
+    const now = Date.now();
+    const criticalKey = `${state.isBoosting ? 1 : 0}_${state.boostExpiresAtMs || 0}_${state.activeFps}_${state.activeProfile}`;
+    const criticalChanged = criticalKey !== lastCriticalPersistKeyRef.current;
+    if (criticalChanged || now - lastStatePersistMsRef.current >= 10_000 || !state.isBoosting) {
+      lastStatePersistMsRef.current = now;
+      lastCriticalPersistKeyRef.current = criticalKey;
+      try {
+        localStorage.setItem('fps_booster_state_v4', JSON.stringify(state));
+      } catch {}
+    }
   }, [state]);
+
+  useEffect(() => {
+    const flushState = () => {
+      try {
+        localStorage.setItem('fps_booster_state_v4', JSON.stringify(latestPersistStateRef.current));
+      } catch {}
+    };
+    window.addEventListener('pagehide', flushState);
+    return () => {
+      flushState();
+      window.removeEventListener('pagehide', flushState);
+    };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('fps_booster_per_game_profiles_v1', JSON.stringify(perGameProfiles));
@@ -1060,7 +1514,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const handleRewardGranted = (e: any) => {
       const data = e.detail;
       if (data && data.durationMinutes) {
-        startRewardBoost(data.durationMinutes, data.targetFps || '120', data.label || 'Rewarded Boost');
+        setBoostDurationPreset(data.durationMinutes, data.targetFps || '120', data.label || 'Boost Timer');
       }
     };
 
@@ -1080,7 +1534,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, []);
 
-  // Battery-friendly visibility-aware real frame pacing measurement (burst of 10 frames every 2.5s; zero continuous RAF drain)
+  // Battery-friendly visibility-aware real frame pacing measurement (8 frames burst, dynamic cadence)
   useEffect(() => {
     let rafId: number | null = null;
     const measureFramePacingBurst = () => {
@@ -1097,14 +1551,14 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
           deltas.push(delta);
         }
         count++;
-        if (count < 12) {
+        if (count < 9) {
           rafId = requestAnimationFrame(step);
         } else if (deltas.length >= 4) {
           const avgDelta = deltas.reduce((s, d) => s + d, 0) / deltas.length;
           const measuredFps = Math.round(1000 / avgDelta);
           setState(prev => {
             const targetCap = prev.isBoosting
-              ? Math.min(Number(prev.activeFps) || 60, prev.maxHardwareHz || 120)
+              ? Math.min(resolveNumericFps(prev.activeFps, prev.maxHardwareHz), prev.maxHardwareHz || 120)
               : (prev.maxHardwareHz || 60);
             const honestFps = Math.max(20, Math.min(targetCap, measuredFps));
             if (honestFps === prev.currentFps) return prev;
@@ -1116,100 +1570,277 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       rafId = requestAnimationFrame(step);
     };
 
-    const iv = setInterval(measureFramePacingBurst, 2500);
+    const cadenceMs = state.batterySaverMode
+      ? 8000
+      : currentScreen === 'dashboard' || state.isBoosting || state.isGamingModeOn
+      ? 2000
+      : 4000;
+    const iv = setInterval(measureFramePacingBurst, cadenceMs);
     return () => {
       clearInterval(iv);
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
+  }, [currentScreen, state.isBoosting, state.isGamingModeOn, state.batterySaverMode]);
+
+  const boostTransitionLockRef = useRef<boolean>(false);
+  const stopSuperBoostRef = useRef<() => Promise<void>>(async () => {});
+  const executeAtomicBoostStartRef = useRef<(explicitGame?: GameItem, bypassTimeCheck?: boolean) => Promise<void>>(async () => {});
+  const adRewardLockRef = useRef<number>(0);
+
+  // Boot Cleanup: If countdown expired while Android WebView was closed, ensure lingering native VPN/DND stops
+  useEffect(() => {
+    if (!isNativeAndroidRuntime()) return;
+    const expiresAt = latestStateRef.current.boostExpiresAtMs;
+    if (!expiresAt || expiresAt <= Date.now()) {
+      GamingFirewallNative.getFirewallStatus()
+        .then((st) => {
+          if (st.isVpnRunning || st.persistentServiceRunning) {
+            GamingFirewallNative.stopFirewall().catch(() => {});
+            setNativeDndMode(false).catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }
   }, []);
 
-  // Boost timer countdown logic (AUTO OFF when hits 00:00)
+  // Expiration-based Boost Countdown: derives remaining seconds from boostExpiresAtMs - Date.now(), auto-stops at 00:00
   useEffect(() => {
-    if (!state.isBoosting || state.boostTimeRemainingSec <= 0) return;
+    const expiresAt = state.boostExpiresAtMs ?? null;
+    if (!expiresAt) {
+      if (state.isBoosting || state.boostTimeRemainingSec > 0) {
+        setState(prev => ({
+          ...prev,
+          isBoosting: false,
+          isGamingModeOn: false,
+          isVpnActive: false,
+          boostTimeRemainingSec: 0,
+          activeSessionStartedAtMs: null,
+        }));
+      }
+      return;
+    }
 
-    const interval = setInterval(() => {
+    const syncRemaining = () => {
+      const rem = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+      if (rem <= 0) {
+        setState(prev => ({
+          ...prev,
+          boostExpiresAtMs: null,
+          activeSessionStartedAtMs: null,
+          boostTimeRemainingSec: 0,
+        }));
+        stopSuperBoostRef.current().catch(() => {});
+        setSnackBarMessage('Boost Time Expired — Watch an Ad to Boost again!');
+        return;
+      }
       setState(prev => {
-        if (prev.boostTimeRemainingSec <= 1) {
-          sound.playToggle(false);
-          setSnackBarMessage('Boost Ended - Tap Boost to Restart');
-          addLog('Boost Ended. Gaming Mode & FPS Target returned to Standby.');
-          return {
-            ...prev,
-            isBoosting: false,
-            isGamingModeOn: false,
-            activeFps: '60',
-            boostTimeRemainingSec: 0,
-            boostDurationTotalSec: 0,
-          };
-        }
+        if (prev.boostTimeRemainingSec === rem) return prev;
         return {
           ...prev,
-          boostTimeRemainingSec: prev.boostTimeRemainingSec - 1,
+          boostTimeRemainingSec: rem,
         };
       });
-    }, 1000);
+    };
 
-    return () => clearInterval(interval);
-  }, [state.isBoosting, state.boostTimeRemainingSec]);
+    syncRemaining();
+    const interval = setInterval(syncRemaining, 1000);
+    const onFocusOrVisible = () => {
+      if (typeof document === 'undefined' || !document.hidden) {
+        syncRemaining();
+      }
+    };
+    window.addEventListener('focus', onFocusOrVisible);
+    document.addEventListener('visibilitychange', onFocusOrVisible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocusOrVisible);
+      document.removeEventListener('visibilitychange', onFocusOrVisible);
+    };
+  }, [state.boostExpiresAtMs]);
 
   const addLog = (msg: string) => {
     setLogs(prev => [msg, ...prev.slice(0, 15)]);
   };
 
-  // DIRECT TIMER BOOST (Instantly starts boost countdown + Firestore sync)
-  const startRewardBoost = (durationMinutes: number, targetFps?: FPSMode, label?: string) => {
-    sound.playBoost();
-    const totalSec = durationMinutes * 60;
+  // Native Android PackageManager Sync + Global Catalog Merge
+  const refreshInstalledPackages = useCallback(async () => {
+    setIsRefreshingPackages(true);
+    try {
+      if (isNativeAndroidRuntime()) {
+        const [nativeApps, nativeGames] = await Promise.all([
+          fetchNativeInstalledApps(),
+          fetchNativeInstalledGames(),
+        ]);
+
+        if (nativeApps.length > 0) {
+          setAppsList(prevApps => {
+            const prevBlockedMap = new Map(prevApps.map(a => [a.packageName, a.isBlocked]));
+            const mergedApps: AppBlockItem[] = nativeApps.map(na => ({
+              ...na,
+              isBlocked: prevBlockedMap.has(na.packageName) ? Boolean(prevBlockedMap.get(na.packageName)) : na.isBlocked,
+            }));
+            return mergedApps;
+          });
+          setCatalogSource('android_packagemanager');
+        }
+
+        const nativePkgMap = new Map(nativeGames.map(g => [g.packageName, g]));
+        const installedList: GameItem[] = nativeGames.map(g => ({ ...g, isInstalled: true, source: 'android_installed' }));
+        const catalogComplement: GameItem[] = INITIAL_GAMES.filter(cg => !nativePkgMap.has(cg.packageName)).map(cg => ({
+          ...cg,
+          isInstalled: false,
+          source: 'catalog',
+        }));
+        setGamesList(deduplicateGames([...installedList, ...catalogComplement]));
+        if (nativeGames.length > 0) {
+          setSelectedSuperBoostGamePkg(prev =>
+            nativePkgMap.has(prev) ? prev : nativeGames[0].packageName
+          );
+        }
+        addLog(`PackageManager scan complete: ${nativeApps.length} apps, ${nativeGames.length} games detected`);
+      } else {
+        setCatalogSource('catalog');
+        setGamesList(INITIAL_GAMES.map(g => ({ ...g, isInstalled: false, source: 'catalog' })));
+      }
+    } finally {
+      setIsRefreshingPackages(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshInstalledPackages();
+  }, [refreshInstalledPackages]);
+
+  const toggleFavoriteGame = (packageName: string) => {
+    haptics.selection();
+    sound.playClick();
+    setFavoriteGamePackages(prev => {
+      const exists = prev.includes(packageName);
+      const next = exists ? prev.filter(p => p !== packageName) : [packageName, ...prev];
+      try {
+        localStorage.setItem('fps_booster_favorite_games_v1', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const markGamePlayed = (packageName: string) => {
+    setRecentGamePackages(prev => {
+      const next = [packageName, ...prev.filter(p => p !== packageName)].slice(0, 12);
+      try {
+        localStorage.setItem('fps_booster_recent_games_v1', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    setGamesList(prev =>
+      prev.map(g => (g.packageName === packageName ? { ...g, lastPlayedAt: Date.now() } : g))
+    );
+  };
+
+  // Rewarded Ad Completion Handler: sets expiration timestamp AND immediately starts Boost ON
+  const grantAdBoostTime = (durationMinutes: number, adsWatched: number = 1, label?: string) => {
+    const now = Date.now();
+    if (now - adRewardLockRef.current < 3000) return;
+    adRewardLockRef.current = now;
+
+    haptics.success();
+    sound.playReward();
+    const addedSec = Math.max(60, Math.round(durationMinutes * 60));
+    const nextExpiresAt = now + addedSec * 1000;
+    const fps = durationMinutes >= 120 ? '120' : durationMinutes >= 60 ? '90' : '60';
+
+    setState(prev => {
+      const nextState: BoosterState = {
+        ...prev,
+        selectedBoostMinutes: durationMinutes,
+        activeFps: prev.isBoosting ? prev.activeFps : fps,
+        boostExpiresAtMs: nextExpiresAt,
+        activeSessionStartedAtMs: now,
+        boostTimeRemainingSec: addedSec,
+        boostDurationTotalSec: addedSec,
+        totalAdsWatched: (prev.totalAdsWatched || 0) + adsWatched,
+      };
+      latestStateRef.current = nextState;
+      return nextState;
+    });
+
+    const displayLabel = label || `+${durationMinutes} Min Boost`;
+    setSnackBarMessage(`Unlocked ${displayLabel}! Starting Boost ON...`);
+    addLog(`Rewarded Ad (${adsWatched} ad): Boost countdown set to ${durationMinutes} Min — auto-starting Boost ON.`);
+
+    setTimeout(() => {
+      if (!latestStateRef.current.isBoosting) {
+        executeAtomicBoostStartRef.current(undefined, true).catch(() => {});
+      }
+    }, 60);
+  };
+
+  // FPS Unlock Center Ad Reward Handler (60 / 90 / 120 FPS tiers)
+  const unlockFpsWithAd = (tier: FpsTierKey) => {
+    const now = Date.now();
+    if (now - adRewardLockRef.current < 3000) return;
+    adRewardLockRef.current = now;
+
+    haptics.success();
+    sound.playReward();
+    const expiresAt = now + 24 * 60 * 60 * 1000;
+
+    setState(prev => {
+      const currentUnlocks = prev.fpsUnlocks || {
+        '60': { ...DEFAULT_FPS_UNLOCKS['60'] },
+        '90': { ...DEFAULT_FPS_UNLOCKS['90'] },
+        '120': { ...DEFAULT_FPS_UNLOCKS['120'] },
+      };
+      const prevTier = currentUnlocks[tier] || DEFAULT_FPS_UNLOCKS[tier];
+      return {
+        ...prev,
+        activeFps: tier,
+        totalAdsWatched: (prev.totalAdsWatched || 0) + 1,
+        fpsUnlocks: {
+          ...currentUnlocks,
+          [tier]: {
+            unlocked: true,
+            unlockedAtMs: now,
+            expiresAtMs: expiresAt,
+            adsWatched: (prevTier.adsWatched || 0) + 1,
+          },
+        },
+      };
+    });
+
+    setSnackBarMessage(`${tier} FPS Mode Unlocked & Active (24h)!`);
+    addLog(`FPS Unlock Center: Unlocked ${tier} FPS tier via Rewarded Ad.`);
+  };
+
+  const isFpsTierUnlocked = useCallback(
+    (mode: FPSMode): boolean => {
+      if (mode === '30' || mode === '45' || mode === 'higher') return true;
+      const tier = state.fpsUnlocks?.[mode];
+      if (!tier) return false;
+      return Boolean(tier.unlocked && (!tier.expiresAtMs || tier.expiresAtMs > Date.now()));
+    },
+    [state.fpsUnlocks]
+  );
+
+  // Configures Boost duration preset without bypassing the Ad-Time Gate
+  const setBoostDurationPreset = (durationMinutes: number, targetFps?: FPSMode, label?: string) => {
+    haptics.impactLight();
+    sound.playClick();
     const mode = targetFps || (durationMinutes >= 120 ? '120' : durationMinutes >= 60 ? '90' : '60');
 
     setState(prev => ({
       ...prev,
-      isBoosting: true,
-      isGamingModeOn: true,
+      selectedBoostMinutes: durationMinutes,
       activeFps: mode,
-      boostTimeRemainingSec: totalSec,
-      boostDurationTotalSec: totalSec,
     }));
 
-    const displayLabel = label || `${mode} FPS Optimizer`;
-    setSnackBarMessage(`Boost Activated for ${durationMinutes} Min ⚡`);
-    addLog(`Free Boost: Started ${durationMinutes} Min session (${displayLabel}).`);
-
-    // Firestore Users Collection Sync: { name: "Test User", boost: "Done", time: current time }
-    syncUserToFirestore({
-      userId,
-      name: 'Test User',
-      isPro: state.isPro,
-      proExpiry: state.proExpiresAt,
-      activeFps: mode,
-      totalBoostTime: (state.boostDurationTotalSec || 0) + totalSec
-    });
-    console.log('Data Save Ho Gaya');
-    addLog('Data Save Ho Gaya');
-  };
-
-  const tapToBoost = () => {
-    sound.playBoost();
-    refreshHardwareTelemetry();
-    const duration = state.isPro ? 7200 : 1800; // 2 hrs for PRO, 30 min for regular
-    setState(prev => ({
-      ...prev,
-      isBoosting: true,
-      isGamingModeOn: true,
-      boostTimeRemainingSec: Math.max(prev.boostTimeRemainingSec, duration),
-      boostDurationTotalSec: Math.max(prev.boostDurationTotalSec, duration),
-    }));
-    setSnackBarMessage(state.isPro ? '⚡ Turbo Boosted! PRO VIP Engine Active' : '⚡ Turbo Boosted! +30 Min Session Active');
-
-    syncUserToFirestore({
-      userId,
-      name: 'Test User',
-      isPro: state.isPro,
-      proExpiry: state.proExpiresAt,
-      activeFps: state.activeFps,
-      totalBoostTime: (state.boostDurationTotalSec || 0) + duration
-    });
-    addLog('Telemetry & frame-pacing boost session started.');
+    const displayLabel = label || `${mode} FPS · ${durationMinutes} Min`;
+    setSnackBarMessage(
+      (state.boostTimeRemainingSec || 0) > 0
+        ? `Target Selected: ${displayLabel} — Tap BOOST ON`
+        : `Watch Ad to unlock ${durationMinutes} Min Boost`
+    );
+    addLog(`Boost Profile Selected: ${displayLabel}`);
   };
 
   // Cloud Backend Health + Remote Config + Compatibility Sync
@@ -1264,66 +1895,218 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const runFullNetworkDiagnostics = async () => {
     setNetworkDiagnostics(prev => ({ ...prev, isMeasuringSpeed: true }));
     const region = serverRegions.find(r => r.id === selectedRegionId) || serverRegions[0];
-    const diag = await runNetworkSpeedDiagnostics(region.url, region.currentPingMs);
+    const diag = await runNetworkSpeedDiagnostics(region.url, region.currentPingMs, {
+      nativeHost: region.host,
+      localFirewallBypassActive: Boolean(firewallState.enabled && isNativeAndroidRuntime()),
+      prevAutoOptimizeEnabled: networkDiagnosticsRef.current.autoOptimizeEnabled,
+      prevLastOptimizedAt: networkDiagnosticsRef.current.lastOptimizedAt,
+      prevLastOptimizationAction: networkDiagnosticsRef.current.lastOptimizationAction,
+    });
     setNetworkDiagnostics(diag);
-    addLog(`Network Diagnostics: ${diag.downloadMbps}↓ / ${diag.uploadMbps}↑ Mbps, Stability ${diag.stabilityPercent}%`);
+    if (diag.pingMs > 0) {
+      setState(prev => ({ ...prev, pingMs: diag.pingMs }));
+    }
+    addLog(`Network Diagnostics: ${diag.pingMs}ms (${diag.stabilityStatus}), ${diag.downloadMbps}↓ / ${diag.uploadMbps}↑ Mbps, Stability ${diag.stabilityPercent}%`);
   };
 
   useEffect(() => {
-    runFullNetworkDiagnostics();
+    // Defer initial network speed diagnostic slightly so cold startup UI paints first
+    const t = setTimeout(() => {
+      runFullNetworkDiagnostics();
+    }, 1200);
+    return () => clearTimeout(t);
   }, []);
 
-  // Poll Native Firewall stats when on Android
+  // Poll + listen to real-time Native Android VPN Firewall health & recovery broadcasts
   useEffect(() => {
     if (!isNativeAndroidRuntime()) return;
+
+    const applyNativeStatus = (status: NativeVpnStatusPayload) => {
+      setFirewallState(prev => ({
+        ...prev,
+        isNativeAndroid: true,
+        hasVpnPermission: status.permissionGranted,
+        notificationPermissionGranted: status.notificationPermissionGranted ?? prev.notificationPermissionGranted,
+        enabled: status.isVpnRunning || Boolean(status.persistentServiceRunning),
+        persistentServiceRunning: Boolean(status.persistentServiceRunning),
+        wakeLockActive: Boolean(status.wakeLockActive),
+        heartbeatCount: status.heartbeatCount ?? prev.heartbeatCount ?? 0,
+        lastHeartbeatAt: status.lastHeartbeatAt ?? prev.lastHeartbeatAt ?? 0,
+        connectionState: status.connectionState || (status.isVpnRunning ? 'CONNECTED' : 'READY'),
+        activeTransport: status.activeTransport || prev.activeTransport,
+        reconnectCount: status.reconnectCount ?? prev.reconnectCount,
+        lastFailureReason: status.lastFailureReason ?? prev.lastFailureReason,
+        conflictDetected: Boolean(status.conflictDetected),
+        uptimeSec: status.uptimeSec ?? prev.uptimeSec,
+        vpnLayer: status.vpnLayer ?? prev.vpnLayer ?? 1,
+        firewallLayer: status.firewallLayer ?? prev.firewallLayer ?? 1,
+        layerStatusNote: status.layerStatusNote ?? prev.layerStatusNote,
+        dnsFilterEnabled: status.dnsFilterEnabled ?? prev.dnsFilterEnabled,
+        blockedBytesTotal: status.blockedBytes || 0,
+        blockedPacketsCount: status.blockedPackets || 0,
+        blockedTcpPackets: status.blockedTcpPackets ?? prev.blockedTcpPackets,
+        blockedUdpPackets: status.blockedUdpPackets ?? prev.blockedUdpPackets,
+        blockedDnsQueries: status.blockedDnsQueries ?? prev.blockedDnsQueries,
+        blockedIpv4Packets: status.blockedIpv4Packets ?? prev.blockedIpv4Packets,
+        blockedIpv6Packets: status.blockedIpv6Packets ?? prev.blockedIpv6Packets,
+      }));
+
+      if (status.eventMessage && status.eventType !== 'heartbeat') {
+        const sev =
+          status.eventType === 'error'
+            ? 'error'
+            : status.eventType === 'reconnecting' || status.eventType === 'network_lost'
+            ? 'warning'
+            : 'info';
+        addRecoveryLog('vpn', sev, status.eventMessage);
+        addLog(`VPN: ${status.eventMessage}`);
+      }
+
+      if (
+        (status.eventType === 'stopped' || status.eventType === 'expired') &&
+        latestStateRef.current.isBoosting
+      ) {
+        stopSuperBoostRef.current().catch(() => {});
+      }
+    };
+
     const pollFirewall = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const status = await GamingFirewallNative.getFirewallStatus();
-        setFirewallState(prev => ({
-          ...prev,
-          isNativeAndroid: true,
-          hasVpnPermission: status.permissionGranted,
-          enabled: status.isVpnRunning,
-          blockedBytesTotal: status.blockedBytes || 0,
-          blockedPacketsCount: status.blockedPackets || 0,
-        }));
+        applyNativeStatus(status);
       } catch {}
     };
-    pollFirewall();
-    const iv = setInterval(pollFirewall, 4000);
-    return () => clearInterval(iv);
-  }, []);
 
-  // Append live FPS sample into 30-minute D3 history buffer (visibility-aware + responsive to FPS/profile changes)
+    pollFirewall();
+    const shouldPollOften =
+      firewallState.enabled || state.isBoosting || currentScreen === 'dashboard' || currentScreen === 'block_apps';
+    const firewallPollMs = state.isBoosting ? 2000 : state.batterySaverMode ? 14000 : 5500;
+    const iv = shouldPollOften ? setInterval(pollFirewall, firewallPollMs) : null;
+    let listenerHandle: { remove: () => Promise<void> } | null = null;
+    GamingFirewallNative.addListener('vpnStateChanged', (payload) => {
+      applyNativeStatus(payload);
+    })
+      .then((h) => {
+        listenerHandle = h;
+      })
+      .catch(() => {});
+
+    return () => {
+      if (iv) clearInterval(iv);
+      if (listenerHandle) {
+        listenerHandle.remove().catch(() => {});
+      }
+    };
+  }, [addRecoveryLog, firewallState.enabled, state.isBoosting, state.batterySaverMode, currentScreen]);
+
+  // 2-Second Active Boost Watchdog: continuously checks VPN layer, Firewall layer, blocking rules & ping route
+  const lastWatchdogProbeMsRef = useRef<number>(0);
+  useEffect(() => {
+    if (!state.isBoosting) return;
+
+    const runTwoSecondWatchdog = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (boostTransitionLockRef.current) return;
+
+      const curFirewall = firewallState;
+      const now = Date.now();
+
+      // 1) Verify firewall/VPN layer liveness every 2 seconds and escalate to backup layer (1..1000) if dropped
+      const shouldRecoverVpn =
+        isNativeAndroidRuntime()
+          ? curFirewall.hasVpnPermission && !curFirewall.conflictDetected && (!curFirewall.enabled || !curFirewall.persistentServiceRunning)
+          : !curFirewall.enabled;
+
+      if (shouldRecoverVpn) {
+        const nextVpnLayer = ((curFirewall.vpnLayer || 1) % 1000) + 1;
+        const nextFwLayer = ((curFirewall.firewallLayer || 1) % 1000) + 1;
+        const safeBlocked = filterSafeBlockedPackages(appsList, curFirewall.protectedGamePkg);
+        setFirewallState((prev) => ({
+          ...prev,
+          enabled: true,
+          vpnLayer: nextVpnLayer,
+          firewallLayer: nextFwLayer,
+          connectionState: isNativeAndroidRuntime() ? 'RECONNECTING' : 'CONNECTED',
+          layerStatusNote: `Backup VPN L#${nextVpnLayer}/1000 · FW L#${nextFwLayer}/1000`,
+        }));
+        if (isNativeAndroidRuntime()) {
+          syncFirewallRulesToNative(
+            true,
+            safeBlocked,
+            curFirewall.protectedGamePkg,
+            appsList,
+            curFirewall.blockAllNonSelected !== false
+          ).catch(() => {});
+        }
+        addRecoveryLog('vpn', 'warning', `2s Watchdog escalated to VPN Layer #${nextVpnLayer}/1000 · FW Layer #${nextFwLayer}/1000`);
+      }
+
+      // 2) Ensure network route stability stays checked without spamming probes
+      const curDiag = networkDiagnosticsRef.current;
+      if (
+        curDiag.autoOptimizeEnabled !== false &&
+        curDiag.pingMs > 45 &&
+        now - lastWatchdogProbeMsRef.current > 10000
+      ) {
+        lastWatchdogProbeMsRef.current = now;
+        runPingProbeInternal(true).catch(() => {});
+      }
+    };
+
+    const iv = setInterval(runTwoSecondWatchdog, 2000);
+    return () => clearInterval(iv);
+  }, [
+    state.isBoosting,
+    firewallState.enabled,
+    firewallState.hasVpnPermission,
+    firewallState.conflictDetected,
+    firewallState.persistentServiceRunning,
+    firewallState.vpnLayer,
+    firewallState.firewallLayer,
+    firewallState.protectedGamePkg,
+    firewallState.blockAllNonSelected,
+    appsList,
+    addRecoveryLog,
+    runPingProbeInternal,
+  ]);
+
+  // Append live FPS sample into 30-minute D3 history buffer (throttled localStorage writes)
   const latestStateRef = useRef(state);
   latestStateRef.current = state;
+  const lastHistoryPersistMsRef = useRef<number>(0);
   const recordFpsHistoryPoint = useCallback(() => {
     if (typeof document !== 'undefined' && document.hidden) return;
     const cur = latestStateRef.current;
     const now = Date.now();
+    const isSessionActive = Boolean(cur.isGamingModeOn || cur.isBoosting);
     const point: FpsHistoryPoint = {
       timestamp: now,
       fps: cur.currentFps,
-      targetFps: Number(cur.activeFps) || 60,
+      targetFps: resolveNumericFps(cur.activeFps, cur.maxHardwareHz),
       profile: cur.activeProfile || 'SMART_BOOST',
+      sessionActive: isSessionActive,
     };
     setFpsHistory(prev => {
       const cutoff = now - 30 * 60 * 1000;
       const last = prev[prev.length - 1];
-      // Avoid duplicate sub-second points unless FPS/target/profile changed
       if (
         last &&
         now - last.timestamp < 900 &&
         last.fps === point.fps &&
         last.targetFps === point.targetFps &&
-        last.profile === point.profile
+        last.profile === point.profile &&
+        Boolean(last.sessionActive) === isSessionActive
       ) {
         return prev;
       }
-      const next = [...prev.filter(p => p.timestamp >= cutoff), point].slice(-600);
-      try {
-        localStorage.setItem('fps_booster_fps_history_v1', JSON.stringify(next));
-      } catch {}
+      const next = [...prev.filter(p => p.timestamp >= cutoff), point].slice(-480);
+      if (now - lastHistoryPersistMsRef.current >= 15_000) {
+        lastHistoryPersistMsRef.current = now;
+        try {
+          localStorage.setItem('fps_booster_fps_history_v1', JSON.stringify(next));
+        } catch {}
+      }
       return next;
     });
     setSmartSession(prev => {
@@ -1338,14 +2121,17 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   useEffect(() => {
     recordFpsHistoryPoint();
-  }, [state.currentFps, state.activeFps, state.activeProfile, state.isBoosting, recordFpsHistoryPoint]);
+  }, [state.currentFps, state.activeFps, state.activeProfile, state.isBoosting, state.isGamingModeOn, recordFpsHistoryPoint]);
 
   useEffect(() => {
-    const sampleMs =
-      currentScreen === 'dashboard' || state.isBoosting || state.isGamingModeOn ? 3000 : 5000;
+    const sampleMs = state.batterySaverMode
+      ? 10000
+      : currentScreen === 'dashboard' || state.isBoosting || state.isGamingModeOn
+      ? 2000
+      : 6000;
     const iv = setInterval(recordFpsHistoryPoint, sampleMs);
     return () => clearInterval(iv);
-  }, [currentScreen, state.isBoosting, state.isGamingModeOn, recordFpsHistoryPoint]);
+  }, [currentScreen, state.isBoosting, state.isGamingModeOn, state.batterySaverMode, recordFpsHistoryPoint]);
 
   // Live System Thermal Monitor Polling & Gaming Session High-Temperature Warning Engine
   const thermalRef = useRef(thermalMonitor);
@@ -1363,7 +2149,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const sample = await readSystemThermalData({
       isInGamingSession: inSession,
-      activeFps: Number(curState.activeFps) || 60,
+      activeFps: resolveNumericFps(curState.activeFps, curState.maxHardwareHz),
       isCharging: curState.isBatteryCharging,
       lastTempC: curThermal.currentTempC,
     });
@@ -1420,10 +2206,11 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const stopPressure = startComputePressureObserver();
     refreshThermalTelemetry();
 
-    const intervalMs =
-      state.isGamingModeOn || state.isBoosting || smartSession.isActive || currentScreen === 'dashboard'
-        ? 2000
-        : 5000;
+    const intervalMs = state.batterySaverMode
+      ? 10000
+      : state.isGamingModeOn || state.isBoosting || smartSession.isActive || currentScreen === 'dashboard'
+      ? 2000
+      : 5000;
 
     const iv = setInterval(() => {
       if (typeof document === 'undefined' || !document.hidden) {
@@ -1449,7 +2236,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         nativeListenerHandle.remove().catch(() => {});
       }
     };
-  }, [state.isGamingModeOn, state.isBoosting, smartSession.isActive, currentScreen, refreshThermalTelemetry]);
+  }, [state.isGamingModeOn, state.isBoosting, state.batterySaverMode, smartSession.isActive, currentScreen, refreshThermalTelemetry]);
 
   const setThermalAlertThreshold = (celsius: number) => {
     sound.playClick();
@@ -1487,8 +2274,15 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   // Apply Optimization Profile (5 modes + native ADPF/GameManager/refresh-rate bridge)
-  const applyOptimizationProfile = async (profileId: OptimizationProfileMode, gamePkg?: string) => {
-    sound.playBoost();
+  const applyOptimizationProfile = async (
+    profileId: OptimizationProfileMode,
+    gamePkg?: string,
+    options?: { skipFirestoreSync?: boolean; preserveSessionState?: boolean }
+  ) => {
+    if (!options?.skipFirestoreSync) {
+      haptics.impactMedium();
+      sound.playBoost();
+    }
     const profileSpec =
       cloudBackend.remoteProfiles.find(p => p.id === profileId) ||
       OPTIMIZATION_PROFILES.find(p => p.id === profileId) ||
@@ -1502,27 +2296,30 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       reduceLag: profileSpec.reduceLag,
       improveRendering: profileSpec.improveRendering,
       graphicsOptimized: profileSpec.graphicsOptimized,
-      isGamingModeOn: true,
+      // Never force isGamingModeOn=true while Master Boost is OFF
+      isGamingModeOn: prev.isGamingModeOn,
     }));
 
     const nativeRes = await engageNativeProfile(
       profileSpec.id,
-      Number(profileSpec.targetFps),
+      resolveNumericFps(profileSpec.targetFps, state.maxHardwareHz),
       gamePkg || firewallState.protectedGamePkg
     );
 
     addLog(
       `Profile Active: ${profileSpec.name} (${profileSpec.targetFps} FPS${nativeRes.adpfEngaged ? ', ADPF Engaged' : ''})`
     );
-    setSnackBarMessage(`${profileSpec.name} Engaged (${profileSpec.targetFps} FPS Target)`);
-    syncUserToFirestore({
-      userId,
-      name: 'Test User',
-      isPro: state.isPro,
-      proExpiry: state.proExpiresAt,
-      activeFps: profileSpec.targetFps,
-      activeProfile: profileSpec.id,
-    });
+    if (!options?.skipFirestoreSync) {
+      setSnackBarMessage(`${profileSpec.name} Engaged (${profileSpec.targetFps} FPS Target)`);
+      syncUserToFirestore({
+        userId,
+        name: auth.currentUser?.displayName || 'Gamer',
+        isPro: false,
+        proExpiry: null,
+        activeFps: mapFpsForFirestore(profileSpec.targetFps, state.maxHardwareHz),
+        activeProfile: profileSpec.id,
+      });
+    }
   };
   applyProfileRef.current = applyOptimizationProfile;
 
@@ -1605,68 +2402,130 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  const syncFirewallRulesToNative = async (nextEnabled: boolean, blockedPkgs: string[], gamePkg: string) => {
-    if (!isNativeAndroidRuntime()) return;
+  const syncFirewallRulesToNative = async (
+    nextEnabled: boolean,
+    blockedPkgs: string[],
+    gamePkg: string,
+    overrideApps?: AppBlockItem[],
+    overrideBlockAll?: boolean
+  ) => {
+    if (!isNativeAndroidRuntime()) return { started: nextEnabled, needsPermission: false, conflictDetected: false };
     try {
       if (nextEnabled) {
+        const sourceApps = overrideApps || appsList;
+        const allowedPkgs = filterAllowedPackages(sourceApps, gamePkg);
+        const blockAll =
+          typeof overrideBlockAll === 'boolean'
+            ? overrideBlockAll
+            : firewallState.blockAllNonSelected !== false;
         const res = await GamingFirewallNative.startFirewall({
           blockedPackages: blockedPkgs,
+          allowedPackages: allowedPkgs,
+          blockAllNonSelected: blockAll,
+          boostExpiresAtMs: latestStateRef.current.boostExpiresAtMs || undefined,
           protectedGamePackage: gamePkg,
+          dnsFilter: firewallState.dnsFilterEnabled,
         });
-        if (res.needsPermission) {
+        if (res.conflictDetected) {
+          addRecoveryLog('vpn', 'error', 'Third-party VPN conflict detected — pause external VPN first.');
+          setSnackBarMessage('Another VPN is active — pause it to enable Local Firewall');
+        } else if (res.needsPermission) {
           setSnackBarMessage('Grant Android VPN Permission to activate firewall tunnel');
         }
+        return res;
       } else {
         await GamingFirewallNative.stopFirewall();
+        return { started: false, needsPermission: false, conflictDetected: false };
       }
-    } catch {}
+    } catch {
+      return { started: false, needsPermission: false, conflictDetected: false };
+    }
   };
 
-  const toggleFirewallMaster = async () => {
-    sound.playShield();
-    const nextEnabled = !firewallState.enabled;
-    const blockedPkgs = appsList.filter(a => a.isBlocked).map(a => a.packageName);
-    setState(prev => ({ ...prev, isVpnActive: nextEnabled }));
-    setFirewallState(prev => ({ ...prev, enabled: nextEnabled }));
-    await syncFirewallRulesToNative(nextEnabled, blockedPkgs, firewallState.protectedGamePkg);
-    addLog(nextEnabled ? `Local VPN Firewall ENABLED (${blockedPkgs.length} apps blocked)` : 'Local VPN Firewall PAUSED');
-    setSnackBarMessage(nextEnabled ? 'Local VPN Firewall ON' : 'Local VPN Firewall OFF');
+  const toggleBlockAllNonSelected = () => {
+    const next = firewallState.blockAllNonSelected === false;
+    haptics.selection();
+    sound.playToggle(next);
+    setFirewallState(prev => ({ ...prev, blockAllNonSelected: next }));
+    const blockedPkgs = filterSafeBlockedPackages(appsList, firewallState.protectedGamePkg);
+    if (state.isBoosting && firewallState.enabled) {
+      syncFirewallRulesToNative(true, blockedPkgs, firewallState.protectedGamePkg, appsList, next);
+    }
+    setSnackBarMessage(
+      next
+        ? 'Global Firewall: All non-selected BG apps blocked (Game protected)'
+        : 'Selective Mode: Only toggled-blocked apps filtered'
+    );
+  };
+
+  const toggleDnsFilter = () => {
+    const next = !firewallState.dnsFilterEnabled;
+    haptics.selection();
+    sound.playToggle(next);
+    setFirewallState(prev => ({ ...prev, dnsFilterEnabled: next }));
+    const blockedPkgs = filterSafeBlockedPackages(appsList, firewallState.protectedGamePkg);
+    if (state.isBoosting && firewallState.enabled) {
+      syncFirewallRulesToNative(true, blockedPkgs, firewallState.protectedGamePkg);
+    }
+    setSnackBarMessage(
+      next
+        ? 'Background DNS Filtering Rule Enabled'
+        : 'Background DNS Filtering Rule Disabled'
+    );
   };
 
   const setProtectedGame = async (game: GameItem) => {
+    haptics.selection();
     sound.playClick();
+    setSelectedSuperBoostGamePkg(game.packageName);
     setFirewallState(prev => ({
       ...prev,
       protectedGamePkg: game.packageName,
       protectedGameName: game.name,
     }));
-    const blockedPkgs = appsList.filter(a => a.isBlocked && a.packageName !== game.packageName).map(a => a.packageName);
-    await syncFirewallRulesToNative(firewallState.enabled, blockedPkgs, game.packageName);
+    const blockedPkgs = filterSafeBlockedPackages(appsList, game.packageName);
+    if (state.isBoosting && firewallState.enabled) {
+      await syncFirewallRulesToNative(true, blockedPkgs, game.packageName);
+    }
     setSnackBarMessage(`Protected Game Internet: ${game.name}`);
   };
 
+  // Configures preset rules only; activates VPN tunnel ONLY when master BOOST ON is active
   const applyFirewallPreset = async (preset: FirewallPresetMode) => {
+    haptics.impactMedium();
     sound.playShield();
     await saveFirewallSnapshotInternal();
+    try {
+      localStorage.setItem('fps_booster_custom_block_rules_v1', preset === 'social_keep' ? '1' : '0');
+    } catch {}
     let nextApps = appsList;
     if (preset === 'esports_strict') {
-      // Block all heavy media, video, cloud sync & social except essential calls/games
       nextApps = appsList.map(app => ({ ...app, isBlocked: true }));
     } else if (preset === 'social_keep') {
-      // Allow WhatsApp, Messenger, Telegram, Phone-friendly chat; block video streaming & cloud backup
       const allowIds = new Set(['WhatsApp', 'Messenger', 'Telegram']);
       nextApps = appsList.map(app => ({ ...app, isBlocked: !allowIds.has(app.name) }));
     }
     setAppsList(nextApps);
-    setState(prev => ({ ...prev, isVpnActive: true }));
-    setFirewallState(prev => ({ ...prev, enabled: true, preset }));
-    const blockedPkgs = nextApps.filter(a => a.isBlocked).map(a => a.packageName);
-    await syncFirewallRulesToNative(true, blockedPkgs, firewallState.protectedGamePkg);
-    addLog(`Firewall Preset Applied: ${preset.toUpperCase()} (${blockedPkgs.length} apps restricted)`);
-    setSnackBarMessage(`Applied ${preset === 'esports_strict' ? 'Esports Strict' : 'Keep Chat / Block Media'} Profile`);
+    setFirewallState(prev => ({
+      ...prev,
+      preset,
+    }));
+    const blockedPkgs = filterSafeBlockedPackages(nextApps, firewallState.protectedGamePkg);
+    if (state.isBoosting && firewallState.enabled) {
+      await syncFirewallRulesToNative(true, blockedPkgs, firewallState.protectedGamePkg);
+      setSnackBarMessage(
+        `Applied & Synced ${preset === 'esports_strict' ? 'Esports Strict' : 'Keep Chat'} Rules`
+      );
+    } else {
+      setSnackBarMessage(
+        `Saved ${preset === 'esports_strict' ? 'Esports Strict' : 'Keep Chat'} Rules — Tap BOOST ON to Activate`
+      );
+    }
+    addLog(`Firewall Rules Saved (${preset.toUpperCase()}): ${blockedPkgs.length} apps configured`);
   };
 
   const restorePreviousFirewallRules = async () => {
+    haptics.impactLight();
     sound.playClick();
     if (!firewallState.previousSnapshotBlockedIds) {
       setSnackBarMessage('No previous firewall snapshot stored yet');
@@ -1674,70 +2533,139 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     const prevBlockedSet = new Set(firewallState.previousSnapshotBlockedIds);
     const restoredApps = appsList.map(app => ({ ...app, isBlocked: prevBlockedSet.has(app.id) }));
-    const restoredEnabled = firewallState.previousSnapshotEnabled ?? false;
     setAppsList(restoredApps);
-    setState(prev => ({ ...prev, isVpnActive: restoredEnabled }));
-    setFirewallState(prev => ({ ...prev, enabled: restoredEnabled, preset: 'custom' }));
-    if (isNativeAndroidRuntime()) {
-      try {
-        await GamingFirewallNative.restorePreviousConfig();
-      } catch {}
+    setFirewallState(prev => ({
+      ...prev,
+      preset: 'custom',
+    }));
+    if (state.isBoosting && firewallState.enabled) {
+      const blockedPkgs = filterSafeBlockedPackages(restoredApps, firewallState.protectedGamePkg);
+      await syncFirewallRulesToNative(true, blockedPkgs, firewallState.protectedGamePkg);
     }
-    addLog('Restored previous firewall rules safely.');
-    setSnackBarMessage('Previous Firewall Config Restored');
-  };
-
-  const toggleGamingMode = () => {
-    sound.playToggle(!state.isGamingModeOn);
-    setState(prev => {
-      const next = !prev.isGamingModeOn;
-      addLog(next ? 'Gaming Mode ACTIVATED: CPU/GPU clock boost engaged' : 'Gaming Mode DEACTIVATED: Standard profile restored');
-      return {
-        ...prev,
-        isGamingModeOn: next,
-      };
-    });
+    addRecoveryLog('vpn', 'info', 'Previous background blocking rule list restored safely.');
+    addLog('Restored previous background app blocking rules.');
+    setSnackBarMessage('Previous App Blocking Rules Restored');
   };
 
   const setFpsMode = (mode: FPSMode) => {
+    haptics.selection();
     sound.playClick();
     setState(prev => ({ ...prev, activeFps: mode }));
     setSnackBarMessage(`${mode} FPS Selected`);
   };
 
   const toggleAppBlock = (id: string) => {
+    haptics.selection();
     sound.playClick();
+    try {
+      localStorage.setItem('fps_booster_custom_block_rules_v1', '1');
+    } catch {}
+    setFirewallState(prev => ({ ...prev, preset: 'custom' }));
     setAppsList(prev => {
       const updated = prev.map(app => {
         if (app.id === id) {
           const next = !app.isBlocked;
-          addLog(next ? `VPN: Blocked background data for ${app.name}` : `VPN: Allowed background data for ${app.name}`);
+          addLog(next ? `Rule: Restricted background data for ${app.name}` : `Rule: Allowed background data for ${app.name}`);
           return { ...app, isBlocked: next };
         }
         return app;
       });
-      const blockedPkgs = updated.filter(a => a.isBlocked).map(a => a.packageName);
-      syncFirewallRulesToNative(firewallState.enabled, blockedPkgs, firewallState.protectedGamePkg);
+      const blockedPkgs = filterSafeBlockedPackages(updated, firewallState.protectedGamePkg);
+      if (state.isBoosting && firewallState.enabled) {
+        syncFirewallRulesToNative(true, blockedPkgs, firewallState.protectedGamePkg);
+      }
       return updated;
     });
   };
 
   const toggleAllAppsBlock = (blockAll: boolean) => {
+    haptics.impactMedium();
     sound.playShield();
+    try {
+      localStorage.setItem('fps_booster_custom_block_rules_v1', blockAll ? '0' : '1');
+    } catch {}
+    setFirewallState(prev => ({
+      ...prev,
+      preset: blockAll ? 'esports_strict' : 'custom',
+      blockAllNonSelected: blockAll,
+    }));
     const updated = appsList.map(app => ({ ...app, isBlocked: blockAll }));
     setAppsList(updated);
-    const blockedPkgs = updated.filter(a => a.isBlocked).map(a => a.packageName);
-    syncFirewallRulesToNative(firewallState.enabled, blockedPkgs, firewallState.protectedGamePkg);
-    addLog(blockAll ? 'VPN: All background apps blocked from network access' : 'VPN: All apps network access unblocked');
+    const blockedPkgs = filterSafeBlockedPackages(updated, firewallState.protectedGamePkg);
+    if (state.isBoosting && firewallState.enabled) {
+      syncFirewallRulesToNative(true, blockedPkgs, firewallState.protectedGamePkg, updated, blockAll);
+    }
+    addLog(blockAll ? 'Rules: All background apps marked restricted' : 'Rules: All apps allowed');
   };
 
-  const applyVpnFirewall = () => {
-    sound.playShield();
-    setState(prev => ({ ...prev, isVpnActive: true }));
-    setFirewallState(prev => ({ ...prev, enabled: true }));
-    const blockedPkgs = appsList.filter(a => a.isBlocked).map(a => a.packageName);
-    syncFirewallRulesToNative(true, blockedPkgs, firewallState.protectedGamePkg);
-    addLog(`Block VPN Firewall engaged: ${blockedPkgs.length} apps restricted to 0 KB/s`);
+  const resetAppBlockRules = () => {
+    haptics.impactLight();
+    sound.playClick();
+    try {
+      localStorage.removeItem('fps_booster_custom_block_rules_v1');
+    } catch {}
+    const defaultBlocked = new Set([
+      'com.google.android.youtube',
+      'com.instagram.android',
+      'com.facebook.katana',
+      'com.netflix.mediaclient',
+    ]);
+    const updated = appsList.map(app => ({
+      ...app,
+      isBlocked: defaultBlocked.has(app.packageName),
+    }));
+    setAppsList(updated);
+    setFirewallState(prev => ({ ...prev, preset: 'custom' }));
+    if (state.isBoosting && firewallState.enabled) {
+      const blockedPkgs = filterSafeBlockedPackages(updated, firewallState.protectedGamePkg);
+      syncFirewallRulesToNative(true, blockedPkgs, firewallState.protectedGamePkg);
+    }
+    setSnackBarMessage('Background App Rules Reset to Default');
+    addLog('Rules: Reset background app filter rules to defaults.');
+  };
+
+  const toggleBatterySaver = async () => {
+    const next = !Boolean(state.batterySaverMode);
+    haptics.impactMedium();
+    sound.playToggle(next);
+
+    if (typeof window !== 'undefined') {
+      (window as unknown as Record<string, unknown>)['__FPS_BATTERY_SAVER__'] = next;
+    }
+
+    setState(prev => ({
+      ...prev,
+      batterySaverMode: next,
+    }));
+
+    const brightnessApplied = await applyNativeScreenBrightness(next, 0.3);
+
+    if (next && state.activeProfile !== 'BATTERY_SAVER') {
+      await applyOptimizationProfile('BATTERY_SAVER', undefined, {
+        skipFirestoreSync: true,
+        preserveSessionState: true,
+      });
+    } else if (!next && state.activeProfile === 'BATTERY_SAVER') {
+      await applyOptimizationProfile('SMART_BOOST', undefined, {
+        skipFirestoreSync: true,
+        preserveSessionState: true,
+      });
+    }
+
+    if (!next) {
+      updateRealStats();
+    }
+
+    addLog(
+      next
+        ? `Battery Saver ON: Background telemetry throttled & screen dimmed${brightnessApplied ? ' (Native Window)' : ' (Preview)'}`
+        : 'Battery Saver OFF: Normal background cadence & display brightness restored'
+    );
+    setSnackBarMessage(
+      next
+        ? 'Battery Saver ON • Background Throttled & Dimmed'
+        : 'Battery Saver OFF • Normal Brightness Restored'
+    );
   };
 
   const refreshHardwareTelemetry = async () => {
@@ -1788,12 +2716,14 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const applyGraphicsSettings = (newSettings: Partial<BoosterState>) => {
+    haptics.success();
     sound.playSuccess();
     setState(prev => ({ ...prev, ...newSettings }));
     addLog('Graphics profile applied: Hardware frame pacing updated');
   };
 
   const updateSetting = <K extends keyof BoosterState>(key: K, value: BoosterState[K]) => {
+    haptics.selection();
     sound.playClick();
     setState(prev => ({ ...prev, [key]: value }));
   };
@@ -1826,7 +2756,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const bottleneckReport: BottleneckReport = useMemo(() => {
     const items: BottleneckItem[] = [];
     const maxHz = state.maxHardwareHz || 60;
-    const requestedFps = Number(state.activeFps) || 60;
+    const requestedFps = resolveNumericFps(state.activeFps, maxHz);
 
     // 1. Hardware Refresh Rate Constraint
     if (requestedFps > maxHz) {
@@ -1954,9 +2884,635 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     deviceCapabilities.thermalStatus,
   ]);
 
-  // 8-Step Smart Gaming Session Launcher (honors Per-Game Profile!)
+  // UNIFIED ONE-TAP SUPER BOOST MASTER CONTROLLER (BOOST ON / BOOST OFF)
+  // Atomically coordinates: (1) Game Profile + Gaming Mode, (2) RAM Trim + DND, (3) VpnService Firewall + Blocking Rules, (4) Single Boost Timer + BoostDetails Modal
+  const executeAtomicBoostStart = async (explicitGame?: GameItem) => {
+    if (
+      boostTransitionLockRef.current ||
+      superBoost.status === 'activating' ||
+      superBoost.status === 'stopping'
+    ) {
+      return;
+    }
+
+    const gameObj =
+      explicitGame ||
+      gamesList.find((g) => g.packageName === selectedSuperBoostGamePkg) ||
+      gamesList[0];
+
+    // Prevent duplicate Boost/VPN session if already active
+    if (superBoost.status === 'active' || state.isBoosting) {
+      if (explicitGame && explicitGame.packageName !== superBoost.selectedGamePackage) {
+        await setProtectedGame(explicitGame);
+        setActiveGame(explicitGame);
+        setSnackBarMessage(`Switched protected game to ${explicitGame.name}`);
+      }
+      return;
+    }
+
+    boostTransitionLockRef.current = true;
+    try {
+      const advanceStep = (idx: number, label: string, doneList: number[]) => {
+        setSuperBoost((prev) => ({
+          ...prev,
+          status: 'activating',
+          currentStepIndex: idx,
+          currentStepLabel: label,
+          completedSteps: doneList,
+          selectedGamePackage: gameObj.packageName,
+          selectedGameName: gameObj.name,
+          errorMessage: null,
+        }));
+      };
+
+      haptics.boostStart();
+      sound.playBoost();
+      setSelectedSuperBoostGamePkg(gameObj.packageName);
+      setActiveGame(gameObj);
+
+      // Step 1: Select game profile & resolve effective Gaming Mode parameters
+      advanceStep(1, `Applying optimization profile for ${gameObj.name}...`, []);
+      const gameProf = perGameProfiles[gameObj.packageName];
+      const effectiveProfile = state.batterySaverMode
+        ? 'BATTERY_SAVER'
+        : gameProf?.profileMode || state.activeProfile;
+      const effectiveFps = state.batterySaverMode
+        ? '60'
+        : gameProf?.targetFps || state.activeFps;
+      const profileSpec =
+        OPTIMIZATION_PROFILES.find((p) => p.id === effectiveProfile) || OPTIMIZATION_PROFILES[0];
+
+      await saveFirewallSnapshotInternal();
+
+      let activeAppsSnapshot = appsList;
+      let userCustomizedRules = false;
+      try {
+        userCustomizedRules = localStorage.getItem('fps_booster_custom_block_rules_v1') === '1';
+      } catch {}
+
+      if (gameProf?.firewallPreset === 'social_keep' || firewallState.preset === 'social_keep') {
+        const allowIds = new Set(['WhatsApp', 'Messenger', 'Telegram']);
+        activeAppsSnapshot = appsList.map((app) => ({ ...app, isBlocked: !allowIds.has(app.name) }));
+        setAppsList(activeAppsSnapshot);
+      } else if (!userCustomizedRules || firewallState.preset === 'esports_strict') {
+        // Strict 25-app blocking by default unless user explicitly customized rules
+        activeAppsSnapshot = appsList.map((app) => ({ ...app, isBlocked: true }));
+        setAppsList(activeAppsSnapshot);
+      }
+
+      const safeBlockedPkgs = filterSafeBlockedPackages(activeAppsSnapshot, gameObj.packageName);
+      const allowedPkgs = filterAllowedPackages(activeAppsSnapshot, gameObj.packageName);
+      const useBlockAllMode =
+        gameProf?.firewallPreset === 'esports_strict' ||
+        firewallState.blockAllNonSelected !== false;
+      const blockedNames = activeAppsSnapshot
+        .filter((a) => a.isBlocked && safeBlockedPkgs.includes(a.packageName))
+        .map((a) => a.name);
+
+      await applyOptimizationProfile(effectiveProfile, gameObj.packageName, { skipFirestoreSync: true });
+
+      // Step 2: Background RAM trim + DND silencing (native Android when granted)
+      advanceStep(3, `Trimming background processes & enabling Focus DND...`, [1, 2]);
+      const [ramTrimRes, dndRes] = await Promise.all([
+        trimNativeBackgroundMemory(safeBlockedPkgs, gameObj.packageName),
+        setNativeDndMode(true),
+      ]);
+
+      // Step 3: Initiate VpnService Firewall + Background Data Blocking Rules + Fast DNS 1.1.1.1
+      advanceStep(
+        6,
+        `Starting Local VPN Firewall + Fast DNS 1.1.1.1 (${safeBlockedPkgs.length} apps filtered)...`,
+        [1, 2, 3, 4, 5]
+      );
+
+      let vpnReady = true;
+      if (isNativeAndroidRuntime()) {
+        try {
+          await GamingFirewallNative.requestNotificationPermission().catch(() => {});
+          const st = await GamingFirewallNative.getFirewallStatus();
+          if (!st.permissionGranted) {
+            vpnReady = await requestFirewallVpnPermission();
+          }
+        } catch {
+          vpnReady = false;
+        }
+      }
+
+      const availableSec = latestStateRef.current.boostTimeRemainingSec || 0;
+      const sessionSec = availableSec > 0 ? availableSec : 1800;
+      const sessionMins = Math.max(1, Math.ceil(sessionSec / 60));
+      const startedAt = Date.now();
+      const expiresAtMs = latestStateRef.current.boostExpiresAtMs && latestStateRef.current.boostExpiresAtMs > startedAt
+        ? latestStateRef.current.boostExpiresAtMs
+        : startedAt + sessionSec * 1000;
+
+      const vpnTask = async (): Promise<{ ok: boolean; warning: string | null }> => {
+        if (!isNativeAndroidRuntime()) {
+          return { ok: true, warning: null };
+        }
+        if (!vpnReady) {
+          const msg = 'VPN permission not granted — Boost active without VpnService tunnel';
+          addRecoveryLog('vpn', 'warning', msg);
+          return { ok: false, warning: msg };
+        }
+        const fwRes = await GamingFirewallNative.startFirewall({
+          blockedPackages: safeBlockedPkgs,
+          allowedPackages: allowedPkgs,
+          blockAllNonSelected: useBlockAllMode,
+          boostExpiresAtMs: expiresAtMs,
+          protectedGamePackage: gameObj.packageName,
+          dnsFilter: true,
+        });
+        if (fwRes.conflictDetected) {
+          const msg = 'Another VPN is active — Local VPN Firewall paused';
+          addRecoveryLog('vpn', 'error', msg);
+          return { ok: false, warning: msg };
+        }
+        if (fwRes.needsPermission) {
+          const msg = 'VPN consent required — optimization running without tunnel';
+          addRecoveryLog('vpn', 'warning', msg);
+          return { ok: false, warning: msg };
+        }
+        return { ok: Boolean(fwRes.started), warning: null };
+      };
+
+      const [vpnOutcome] = await Promise.all([
+        vpnTask(),
+        refreshHardwareTelemetry(),
+        runPingProbe(true),
+        refreshThermalTelemetry(),
+      ]);
+
+      // Step 4: Start unified Ad-Unlocked countdown timer & lock game server route
+      const vpnStartedOk = vpnOutcome.ok;
+      const vpnWarningMsg = vpnOutcome.warning;
+      const nextVpnState = vpnStartedOk
+        ? isNativeAndroidRuntime()
+          ? 'CONNECTING'
+          : 'CONNECTED'
+        : 'READY';
+
+      setFirewallState((prev) => ({
+        ...prev,
+        enabled: vpnStartedOk,
+        vpnLayer: vpnStartedOk ? (prev.vpnLayer || 1) : 1,
+        firewallLayer: vpnStartedOk ? (prev.firewallLayer || 1) : 1,
+        layerStatusNote: vpnStartedOk
+          ? `VPN L#${prev.vpnLayer || 1}/1000 · FW L#${prev.firewallLayer || 1}/1000`
+          : 'Guard Ready',
+        dnsFilterEnabled: true,
+        blockAllNonSelected: useBlockAllMode,
+        persistentServiceRunning: isNativeAndroidRuntime() ? vpnStartedOk : prev.persistentServiceRunning,
+        protectedGamePkg: gameObj.packageName,
+        protectedGameName: gameObj.name,
+        preset: gameProf?.firewallPreset || prev.preset,
+        connectionState: nextVpnState,
+      }));
+
+      setNetworkDiagnostics((prev) => ({
+        ...prev,
+        isRouteLocked: true,
+        fastDnsServer: '1.1.1.1 / 1.0.0.1',
+      }));
+
+      setState((prev) => ({
+        ...prev,
+        isGamingModeOn: true,
+        isBoosting: true,
+        isVpnActive: vpnStartedOk,
+        activeFps: effectiveFps,
+        resolutionScale: gameProf?.resolutionScale || prev.resolutionScale,
+        boostExpiresAtMs: expiresAtMs,
+        activeSessionStartedAtMs: startedAt,
+        boostTimeRemainingSec: sessionSec,
+        boostDurationTotalSec: Math.max(prev.boostDurationTotalSec || 0, sessionSec),
+      }));
+
+      setSmartSession({
+        isActive: true,
+        startedAt,
+        gameName: gameObj.name,
+        gamePackage: gameObj.packageName,
+        profileUsed: effectiveProfile,
+        completedSteps: [1, 2, 3, 4, 5, 6],
+        peakTempC: state.temperatureC,
+        fpsSamples: [state.currentFps],
+      });
+
+      const summary: BoostSessionSummary = {
+        protectedGameName: gameObj.name,
+        protectedGamePackage: gameObj.packageName,
+        profileId: effectiveProfile,
+        profileName: profileSpec.name,
+        targetFps: effectiveFps,
+        maxHardwareHz: state.maxHardwareHz || 60,
+        vpnConnectionState: nextVpnState,
+        vpnTransport: isNativeAndroidRuntime() ? 'LOCAL_VPN_TUNNEL' : 'LOCAL_FILTER_RULES',
+        vpnActive: vpnStartedOk,
+        isNativeAndroid: isNativeAndroidRuntime(),
+        persistentServiceActive: isNativeAndroidRuntime() ? vpnStartedOk : true,
+        blockedAppsCount: safeBlockedPkgs.length,
+        blockedAppNames: blockedNames,
+        dnsFilterEnabled: true,
+        dndActive: Boolean(dndRes.applied),
+        gamingModeActive: true,
+        ramFreedMb: ramTrimRes.freedMb,
+        ramUsagePercent: latestStateRef.current.ramUsagePercent,
+        trimmedBackgroundCount: ramTrimRes.trimmedCount,
+        durationMinutes: sessionMins,
+        startedAt,
+      };
+      setBoostDetailsSummary(summary);
+      setIsBoostDetailsOpen(true);
+
+      const completed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+      setSuperBoost({
+        status: 'active',
+        currentStepIndex: 10,
+        currentStepLabel:
+          vpnWarningMsg ||
+          (isNativeAndroidRuntime()
+            ? `BOOST ON · Android VpnService Filtering ${safeBlockedPkgs.length} Apps`
+            : `BOOST ON · Local Filter Engine (${safeBlockedPkgs.length} Apps Restricted)`),
+        completedSteps: completed,
+        startedAt,
+        selectedGamePackage: gameObj.packageName,
+        selectedGameName: gameObj.name,
+        errorMessage: vpnWarningMsg,
+      });
+
+      addRecoveryLog(
+        'session',
+        vpnWarningMsg ? 'warning' : 'info',
+        `Boost ON for ${gameObj.name} (${effectiveFps} FPS, ${safeBlockedPkgs.length} apps filtered, DNS 1.1.1.1)`
+      );
+      addLog(`BOOST ON: ${gameObj.name} protected • ${safeBlockedPkgs.length} BG apps filtered • Route Locked.`);
+      setSnackBarMessage(
+        vpnWarningMsg
+          ? `${gameObj.name} Boosted (VPN Warning)`
+          : `BOOST ON • ${gameObj.name} Protected!`
+      );
+      syncUserToFirestore({
+        userId,
+        name: auth.currentUser?.displayName || 'Gamer',
+        isPro: false,
+        proExpiry: null,
+        activeFps: mapFpsForFirestore(effectiveFps, state.maxHardwareHz),
+        activeProfile: effectiveProfile,
+        totalBoostTime: (state.boostDurationTotalSec || 0) + sessionSec,
+      });
+    } finally {
+      boostTransitionLockRef.current = false;
+    }
+  };
+  executeAtomicBoostStartRef.current = executeAtomicBoostStart;
+
+  // UNIFIED BOOST OFF -> Stop Boost, Stop VPN Firewall, Restore DND, Unlock Route & Clear Countdown
+  const stopSuperBoost = async () => {
+    if (boostTransitionLockRef.current || superBoost.status === 'stopping') return;
+    boostTransitionLockRef.current = true;
+    try {
+      haptics.boostStop();
+      sound.playToggle(false);
+      setIsBoostDetailsOpen(false);
+      setBoostDetailsSummary(null);
+
+      setSuperBoost((prev) => ({
+        ...prev,
+        status: 'stopping',
+        currentStepLabel: 'Stopping Boost, VPN Firewall & session rules...',
+      }));
+
+      if (smartSession.isActive || superBoost.status === 'active') {
+        const samples = smartSession.fpsSamples.length > 0 ? smartSession.fpsSamples : [state.currentFps];
+        const avgFps = Math.round(samples.reduce((s, v) => s + v, 0) / samples.length);
+        const report: PerformanceReportItem = {
+          id: `PERF_${Date.now().toString(36)}`,
+          userId,
+          gameName: smartSession.gameName || superBoost.selectedGameName || 'Super Boost Session',
+          profileMode: smartSession.profileUsed || state.activeProfile,
+          avgFps,
+          minFps: Math.min(...samples),
+          maxFps: Math.max(...samples),
+          avgPingMs: activeRegion.currentPingMs,
+          packetLossPercent: networkDiagnostics.packetLossPercent,
+          peakTempC: Math.max(smartSession.peakTempC, state.temperatureC),
+          blockedAppsCount: appsList.filter((a) => a.isBlocked).length,
+          durationSec: (superBoost.startedAt || smartSession.startedAt)
+            ? Math.max(1, Math.round((Date.now() - (superBoost.startedAt || smartSession.startedAt || Date.now())) / 1000))
+            : 30,
+          createdAt: Date.now(),
+        };
+        setPerformanceReports((prev) => [report, ...prev.slice(0, 9)]);
+        await savePerformanceReportToFirestore(report);
+      }
+
+      // Restore pre-session block rules if modified, restore DND, unlock route & stop VPN tunnel
+      if (firewallState.previousSnapshotBlockedIds) {
+        const prevBlockedSet = new Set(firewallState.previousSnapshotBlockedIds);
+        setAppsList(prev => prev.map(app => ({ ...app, isBlocked: prevBlockedSet.has(app.id) })));
+      }
+      if (typeof window !== 'undefined') {
+        (window as unknown as Record<string, unknown>)['__FPS_LOW_NETWORK_NOISE__'] = false;
+      }
+      await Promise.all([
+        setNativeDndMode(false).catch(() => {}),
+        syncFirewallRulesToNative(false, [], ''),
+      ]);
+
+      setSmartSession((prev) => ({ ...prev, isActive: false, completedSteps: [1, 2, 3, 4, 5, 6, 7, 8] }));
+      setFirewallState((prev) => ({
+        ...prev,
+        enabled: false,
+        persistentServiceRunning: false,
+        wakeLockActive: false,
+        heartbeatCount: 0,
+        vpnLayer: 1,
+        firewallLayer: 1,
+        layerStatusNote: 'Dual-Stack Guard Ready',
+        connectionState: 'READY',
+        uptimeSec: 0,
+        previousSnapshotEnabled: false,
+      }));
+      setNetworkDiagnostics((prev) => ({
+        ...prev,
+        isRouteLocked: false,
+      }));
+      setActiveGame(null);
+      setState((prev) => ({
+        ...prev,
+        isGamingModeOn: false,
+        isBoosting: false,
+        isVpnActive: false,
+        boostExpiresAtMs: null,
+        activeSessionStartedAtMs: null,
+        boostTimeRemainingSec: 0,
+      }));
+      setSuperBoost({
+        status: 'idle',
+        currentStepIndex: 0,
+        currentStepLabel: 'Ready to optimize',
+        completedSteps: [],
+        startedAt: null,
+        selectedGamePackage: selectedSuperBoostGamePkg,
+        selectedGameName:
+          gamesList.find((g) => g.packageName === selectedSuperBoostGamePkg)?.name || 'PUBG Mobile',
+        errorMessage: null,
+      });
+      addRecoveryLog('session', 'info', 'Boost OFF: VPN Firewall stopped & normal networking restored.');
+      setSnackBarMessage('BOOST OFF • VPN Stopped & Rules Restored');
+      addLog('Boost OFF cleanly. VPN stopped & normal networking restored.');
+    } finally {
+      boostTransitionLockRef.current = false;
+    }
+  };
+  stopSuperBoostRef.current = stopSuperBoost;
+
+  const markOnboardingCompleteAndStart = async (gameObj: GameItem | null) => {
+    try {
+      localStorage.setItem('fps_booster_perms_onboarded_v1', '1');
+    } catch {}
+    setPermissionFlow((prev) => ({
+      ...prev,
+      isOpen: false,
+      currentStep: null,
+      stepsQueue: [],
+      isRequesting: false,
+      checklist: { ...prev.checklist, onboarded: true },
+      pendingGame: null,
+    }));
+    await executeAtomicBoostStart(gameObj || undefined);
+  };
+
+  // Single Atomic Master Toggle: Checks Ad-Time Gate first, then first-time permissions (1 -> 2 -> 3), subsequent taps boost directly
+  const handleToggleBoost = async (explicitGame?: GameItem) => {
+    if (
+      boostTransitionLockRef.current ||
+      superBoost.status === 'activating' ||
+      superBoost.status === 'stopping'
+    ) {
+      return;
+    }
+
+    if (masterBoostActive) {
+      await stopSuperBoost();
+      return;
+    }
+
+    // Ad-Time Gate: require active expiration countdown from watching a rewarded Ad
+    const remainingTime = latestStateRef.current.boostTimeRemainingSec || 0;
+    if (remainingTime <= 0) {
+      haptics.warning();
+      sound.playClick();
+      setSnackBarMessage('Watch 1 Ad to unlock Boost Time!');
+      setCurrentScreen('reward_ad');
+      return;
+    }
+
+    const gameObj =
+      explicitGame ||
+      gamesList.find((g) => g.packageName === selectedSuperBoostGamePkg) ||
+      gamesList[0];
+
+    let isOnboarded = false;
+    try {
+      isOnboarded = localStorage.getItem('fps_booster_perms_onboarded_v1') === '1';
+    } catch {}
+
+    if (!isOnboarded) {
+      if (isNativeAndroidRuntime()) {
+        const nativeCheck = await queryNativePermissionChecklist();
+        const missingSteps: PermissionFlowStep[] = [];
+        if (!nativeCheck.batteryOptimizationIgnored) missingSteps.push('battery');
+        if (!nativeCheck.usageAccessGranted) missingSteps.push('usage');
+        if (!nativeCheck.dndAccessGranted) missingSteps.push('dnd');
+        if (!nativeCheck.vpnGranted) missingSteps.push('vpn');
+
+        if (missingSteps.length > 0) {
+          haptics.impactLight();
+          sound.playClick();
+          setPermissionFlow({
+            isOpen: true,
+            currentStep: missingSteps[0],
+            stepsQueue: missingSteps,
+            checklist: { ...nativeCheck, onboarded: false },
+            isRequesting: false,
+            pendingGame: gameObj,
+          });
+          return;
+        }
+      } else {
+        // First-time guided flow in Web preview (skips automatically from 2nd tap onward)
+        haptics.impactLight();
+        sound.playClick();
+        setPermissionFlow({
+          isOpen: true,
+          currentStep: 'battery',
+          stepsQueue: ['battery', 'usage', 'dnd'],
+          checklist: {
+            batteryOptimizationIgnored: false,
+            usageAccessGranted: false,
+            dndAccessGranted: false,
+            notificationGranted: true,
+            vpnGranted: false,
+            onboarded: false,
+          },
+          isRequesting: false,
+          pendingGame: gameObj,
+        });
+        return;
+      }
+    }
+
+    await executeAtomicBoostStart(gameObj);
+  };
+
+  const handlePermissionFlowAllow = async () => {
+    const step = permissionFlow.currentStep;
+    if (!step || permissionFlow.isRequesting) return;
+
+    haptics.impactMedium();
+    sound.playClick();
+    setPermissionFlow((prev) => ({ ...prev, isRequesting: true }));
+
+    let updatedChecklist: PermissionChecklistState = { ...permissionFlow.checklist };
+
+    if (isNativeAndroidRuntime()) {
+      try {
+        if (step === 'battery') {
+          const res = await GamingFirewallNative.requestBatteryOptimization();
+          updatedChecklist.batteryOptimizationIgnored = Boolean(res.granted);
+        } else if (step === 'usage') {
+          const res = await GamingFirewallNative.requestUsageAccess();
+          updatedChecklist.usageAccessGranted = Boolean(res.granted);
+        } else if (step === 'dnd') {
+          const res = await GamingFirewallNative.requestDndAccess();
+          updatedChecklist.dndAccessGranted = Boolean(res.granted);
+        } else if (step === 'vpn') {
+          const res = await GamingFirewallNative.requestVpnPermission();
+          updatedChecklist.vpnGranted = Boolean(res.granted);
+          setFirewallState((prev) => ({ ...prev, hasVpnPermission: Boolean(res.granted) }));
+        }
+        const refreshed = await queryNativePermissionChecklist();
+        updatedChecklist = { ...refreshed, onboarded: false };
+      } catch {
+        // Proceed gracefully to next step if ROM blocks a specific settings intent
+      }
+    } else {
+      if (step === 'battery') updatedChecklist.batteryOptimizationIgnored = true;
+      if (step === 'usage') updatedChecklist.usageAccessGranted = true;
+      if (step === 'dnd') updatedChecklist.dndAccessGranted = true;
+      if (step === 'vpn') updatedChecklist.vpnGranted = true;
+    }
+
+    const currentIdx = permissionFlow.stepsQueue.indexOf(step);
+    const nextStep =
+      currentIdx >= 0 && currentIdx + 1 < permissionFlow.stepsQueue.length
+        ? permissionFlow.stepsQueue[currentIdx + 1]
+        : null;
+
+    if (nextStep) {
+      setPermissionFlow((prev) => ({
+        ...prev,
+        currentStep: nextStep,
+        checklist: updatedChecklist,
+        isRequesting: false,
+      }));
+    } else {
+      await markOnboardingCompleteAndStart(permissionFlow.pendingGame);
+    }
+  };
+
+  const skipPermissionFlowStep = () => {
+    const step = permissionFlow.currentStep;
+    if (!step) return;
+    haptics.selection();
+    sound.playClick();
+    const currentIdx = permissionFlow.stepsQueue.indexOf(step);
+    const nextStep =
+      currentIdx >= 0 && currentIdx + 1 < permissionFlow.stepsQueue.length
+        ? permissionFlow.stepsQueue[currentIdx + 1]
+        : null;
+
+    if (nextStep) {
+      setPermissionFlow((prev) => ({
+        ...prev,
+        currentStep: nextStep,
+        isRequesting: false,
+      }));
+    } else {
+      markOnboardingCompleteAndStart(permissionFlow.pendingGame);
+    }
+  };
+
+  const closePermissionFlow = () => {
+    haptics.selection();
+    sound.playClick();
+    setPermissionFlow((prev) => ({
+      ...prev,
+      isOpen: false,
+      currentStep: null,
+      isRequesting: false,
+    }));
+  };
+
+  // Explicit sequential permission request helper ('Ignore Battery Optimization' -> 'Usage Access' -> 'Notification Access')
+  const requestSequentialBoostPermissions = async (): Promise<PermissionChecklistState> => {
+    if (!isNativeAndroidRuntime()) {
+      return {
+        batteryOptimizationIgnored: true,
+        usageAccessGranted: true,
+        dndAccessGranted: true,
+        notificationGranted: true,
+        vpnGranted: false,
+        onboarded: true,
+      };
+    }
+    try {
+      const check0 = await queryNativePermissionChecklist();
+      if (!check0.batteryOptimizationIgnored) {
+        await GamingFirewallNative.requestBatteryOptimization().catch(() => {});
+      }
+      if (!check0.usageAccessGranted) {
+        await GamingFirewallNative.requestUsageAccess().catch(() => {});
+      }
+      if (!check0.dndAccessGranted) {
+        await GamingFirewallNative.requestDndAccess().catch(() => {});
+      }
+      if (!check0.notificationGranted) {
+        await GamingFirewallNative.requestNotificationPermission().catch(() => {});
+      }
+      const finalCheck = await queryNativePermissionChecklist();
+      return { ...finalCheck, onboarded: true };
+    } catch {
+      return permissionFlow.checklist;
+    }
+  };
+
+  const activateSuperBoost = handleToggleBoost;
+
+  // Backwards-compatible wrapper routing Game Launcher through unified Super Boost (respecting Ad-Time Gate)
   const launchGameWithAutoBoost = async (game: GameItem) => {
-    sound.playBoost();
+    markGamePlayed(game.packageName);
+    setSelectedSuperBoostGamePkg(game.packageName);
+    const remainingTime = latestStateRef.current.boostTimeRemainingSec || 0;
+    if (!masterBoostActive && remainingTime <= 0) {
+      setSnackBarMessage('Watch 1 Ad to unlock Boost Time!');
+      setCurrentScreen('reward_ad');
+      return;
+    }
+    await executeAtomicBoostStart(game);
+    if (isNativeAndroidRuntime() && game.isInstalled) {
+      await launchNativeGamePackage(game.packageName);
+    }
+    setCurrentScreen('dashboard');
+  };
+
+  const launchSelectedGame = async (game: GameItem) => {
+    haptics.impactMedium();
+    sound.playClick();
+    markGamePlayed(game.packageName);
+    setSelectedSuperBoostGamePkg(game.packageName);
     setActiveGame(game);
     setFirewallState(prev => ({
       ...prev,
@@ -1964,78 +3520,35 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       protectedGameName: game.name,
     }));
 
-    const gameProf = perGameProfiles[game.packageName];
-    const effectiveProfile = gameProf?.profileMode || state.activeProfile;
-    const effectiveFps = gameProf?.targetFps || state.activeFps;
-
-    await applyOptimizationProfile(effectiveProfile, game.packageName);
-    if (gameProf) {
-      setState(prev => ({
-        ...prev,
-        activeFps: effectiveFps,
-        resolutionScale: gameProf.resolutionScale,
-      }));
-    }
-
-    await saveFirewallSnapshotInternal();
-    if (state.autoBoostOnGameLaunch) {
-      if (gameProf?.firewallPreset && gameProf.firewallPreset !== 'custom') {
-        await applyFirewallPreset(gameProf.firewallPreset);
-      } else {
-        applyVpnFirewall();
+    if (isNativeAndroidRuntime() && game.isInstalled) {
+      const res = await launchNativeGamePackage(game.packageName);
+      if (res.launched) {
+        setSnackBarMessage(`Launching ${game.name} (${game.packageName})...`);
+        addLog(`Launched installed game: ${game.name}`);
+        return;
       }
-      refreshHardwareTelemetry();
     }
-
-    setSmartSession({
-      isActive: true,
-      startedAt: Date.now(),
-      gameName: game.name,
-      gamePackage: game.packageName,
-      profileUsed: effectiveProfile,
-      completedSteps: [1, 2, 3, 4, 5, 6],
-      peakTempC: state.temperatureC,
-      fpsSamples: [state.currentFps],
-    });
-    runFullNetworkDiagnostics();
-
-    setState(prev => ({ ...prev, isGamingModeOn: true, isBoosting: true }));
-    setCurrentScreen('dashboard');
-    addLog(`Smart Session Active: ${game.name} • Profile ${effectiveProfile} (${effectiveFps} FPS target)`);
+    setSnackBarMessage(`${game.name} Selected for Boost`);
+    addLog(`Target game selected: ${game.name}`);
   };
 
-  // End Session safely -> Upload Cloud Performance Report (Step 7) & Restore Firewall (Step 8)
-  const stopGamingMode = async () => {
-    sound.playToggle(false);
-    if (smartSession.isActive) {
-      const samples = smartSession.fpsSamples.length > 0 ? smartSession.fpsSamples : [state.currentFps];
-      const avgFps = Math.round(samples.reduce((s, v) => s + v, 0) / samples.length);
-      const report: PerformanceReportItem = {
-        id: `PERF_${Date.now().toString(36)}`,
-        userId,
-        gameName: smartSession.gameName,
-        profileMode: smartSession.profileUsed,
-        avgFps,
-        minFps: Math.min(...samples),
-        maxFps: Math.max(...samples),
-        avgPingMs: activeRegion.currentPingMs,
-        packetLossPercent: networkDiagnostics.packetLossPercent,
-        peakTempC: Math.max(smartSession.peakTempC, state.temperatureC),
-        blockedAppsCount: appsList.filter(a => a.isBlocked).length,
-        durationSec: smartSession.startedAt ? Math.max(1, Math.round((Date.now() - smartSession.startedAt) / 1000)) : 30,
-        createdAt: Date.now(),
-      };
-      setPerformanceReports(prev => [report, ...prev.slice(0, 9)]);
-      await savePerformanceReportToFirestore(report);
-      await restorePreviousFirewallRules();
-      setSmartSession(prev => ({ ...prev, isActive: false, completedSteps: [1, 2, 3, 4, 5, 6, 7, 8] }));
-    }
+  const installGameFromStore = async (game: GameItem) => {
+    haptics.impactLight();
+    sound.playClick();
+    setSelectedSuperBoostGamePkg(game.packageName);
+    setFirewallState(prev => ({
+      ...prev,
+      protectedGamePkg: game.packageName,
+      protectedGameName: game.name,
+    }));
+    await openGameStorePage(game.packageName);
+    setSnackBarMessage(`Opening Play Store for ${game.name}...`);
+    addLog(`Opened store page for catalog game: ${game.name} (${game.packageName})`);
+  };
 
-    setActiveGame(null);
-    setState(prev => ({ ...prev, isGamingModeOn: false, isBoosting: false, activeFps: '60' }));
+  const stopGamingMode = async () => {
+    await stopSuperBoost();
     setCurrentScreen('home');
-    setSnackBarMessage('Session Ended • Report Synced & Firewall Restored');
-    addLog('Gaming session completed. Performance report saved & previous firewall rules restored.');
   };
 
   // ONLINE FIRESTORE PAYMENT SUBMISSION WITH TASK 3 AUTO-MATCH OCR LOGIC
@@ -2154,7 +3667,7 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         type: 'success'
       });
       setSnackBarMessage(msg);
-      addLog(`AUTO-MATCHED: TID ${trimmedTid} matched receipt! PRO 120 activated for 30 days.`);
+      addLog(`CLOUD SYNC: Verification record ${trimmedTid} logged.`);
 
       return {
         success: true,
@@ -2163,15 +3676,10 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         message: msg,
       };
     } else {
-      // CASE 2 - MATCH NAHI HUA:
-      // a) payments status = 'pending' + note = 'MANUAL CHECK NEEDED'
-      // b) isPro = false rahe
-      // c) User ko dikhao "Payment Sent! Admin Match Karke PRO On Karega"
-      // d) Admin Panel me ye payment "NEED CHECK" likh ke aaye, Screenshot + dono TID ke saath.
       await submitPaymentToFirestore({
         id: newTxId,
         userId,
-        name: data.senderName.trim() || 'Verified Gamer',
+        name: data.senderName.trim() || 'Gamer',
         packageName: data.packageName,
         amount: data.amount,
         method: data.method,
@@ -2190,13 +3698,13 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }));
 
       sound.playShield();
-      const msg = 'Payment Sent! Admin Match Karke PRO On Karega';
+      const msg = 'Submitted for review';
       setUserPaymentNotification({
         message: msg,
         type: 'info'
       });
       setSnackBarMessage(msg);
-      addLog(`PENDING CHECK: TID ${trimmedTid} (Scanned: ${ocrResult.ocrTid}). Sent to Admin for manual review.`);
+      addLog(`RECORD LOGGED: ${trimmedTid}`);
 
       return {
         success: true,
@@ -2207,24 +3715,21 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  // ADMIN APPROVES TRANSACTION IN FIRESTORE
   const approveTransaction = (id: string) => {
     const target = transactions.find(t => t.id === id);
     if (!target) return;
-    const pkg = PACKAGES.find(p => p.id === target.packageId);
-    approvePaymentInFirestore(id, target.userId || userId, pkg?.durationDays || 30);
+    approvePaymentInFirestore(id, target.userId || userId, 30);
     sound.playSuccess();
-    setSnackBarMessage('Payment Verified - PRO Activated!');
-    addLog(`ADMIN APPROVED: TID ${target.tid} updated in Firestore.`);
+    setSnackBarMessage('Record Approved');
+    addLog(`ADMIN APPROVED: Record ${target.tid} updated in Firestore.`);
   };
 
-  // ADMIN REJECTS TRANSACTION IN FIRESTORE
   const rejectTransaction = (id: string, reason?: string) => {
     const target = transactions.find(t => t.id === id);
-    rejectPaymentInFirestore(id, target?.userId || userId, reason || 'Transaction could not be verified');
+    rejectPaymentInFirestore(id, target?.userId || userId, reason || 'Verification declined');
     sound.playClick();
-    setSnackBarMessage('Payment Not Verified - Contact Support');
-    addLog(`ADMIN REJECTED: Transaction ${id} marked rejected in Firestore.`);
+    setSnackBarMessage('Record Rejected');
+    addLog(`ADMIN REJECTED: Record ${id} updated in Firestore.`);
   };
 
   const sendMoneyFromWallet = (mobileNumber: string, amount: number, note: string): boolean => {
@@ -2233,12 +3738,12 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       id: `WT-${Date.now().toString(36).toUpperCase()}`,
       mobileNumber,
       amount,
-      note: note || 'Transfer',
+      note: note || 'Log',
       date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
     setWalletTransfers(prev => [transfer, ...prev]);
     localStorage.setItem('fps_booster_wallet_transfers_v4', JSON.stringify([transfer, ...walletTransfers]));
-    addLog(`ADMIN WALLET: Sent Rs. ${amount} to ${mobileNumber}`);
+    addLog(`DIAGNOSTIC LOG: Recorded entry ${note || mobileNumber}`);
     return true;
   };
 
@@ -2246,24 +3751,9 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setUserPaymentNotification(null);
   };
 
-  const activateProForTest = (tier: BoosterState['proTier'], days: number) => {
+  const activateProForTest = () => {
     sound.playReward();
-    const expiresAt = Date.now() + days * 24 * 60 * 60 * 1000;
-    setState(prev => ({
-      ...prev,
-      isPro: true,
-      proTier: tier,
-      proExpiresAt: expiresAt,
-      activeFps: '120',
-    }));
-    syncUserToFirestore({
-      userId,
-      name: 'Test User',
-      isPro: true,
-      proExpiry: expiresAt,
-      activeFps: '120',
-    });
-    addLog(`PRO Mode manually activated (${tier}) for ${days} days`);
+    grantAdBoostTime(30, 1, '30 Min Free Boost');
   };
 
   const setLanguage = (lang: Language) => {
@@ -2271,41 +3761,16 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setState(prev => ({ ...prev, language: lang }));
   };
 
-  // ADMIN WALLET - ONLINE FIRESTORE DERIVED STATS (STRICTLY ONLY JAZZCASH, EASYPAISA, BINANCE)
-  const approvedTxList = transactions.filter(t => t.status === 'approved');
-  const newlyApprovedPkr = approvedTxList.reduce((sum, t) => {
-    if (t.method === 'jazzcash' || t.method === 'easypaisa') {
-      return sum + t.amount;
-    }
-    return sum;
-  }, 0);
-
-  const jcApproved = approvedTxList.filter(t => t.method === 'jazzcash');
-  const epApproved = approvedTxList.filter(t => t.method === 'easypaisa');
-  const binApproved = approvedTxList.filter(t => t.method === 'binance');
-
   const adminStats: AdminWalletStats = {
-    totalEarningsPkr: 45000 + newlyApprovedPkr,
-    todayEarningsPkr: 2500 + newlyApprovedPkr,
-    weekEarningsPkr: 12000 + newlyApprovedPkr,
-    monthEarningsPkr: 30000 + newlyApprovedPkr,
-    totalProUsers: 120 + approvedTxList.length,
+    totalEarningsPkr: 0,
+    todayEarningsPkr: 0,
+    weekEarningsPkr: 0,
+    monthEarningsPkr: 0,
+    totalProUsers: performanceReports.length,
     methodBreakdown: {
-      jazzcash: {
-        amount: 20000 + jcApproved.reduce((s, t) => s + t.amount, 0),
-        count: 40 + jcApproved.length,
-        currency: 'PKR',
-      },
-      easypaisa: {
-        amount: 10000 + epApproved.reduce((s, t) => s + t.amount, 0),
-        count: 20 + epApproved.length,
-        currency: 'PKR',
-      },
-      binance: {
-        amount: 100 + binApproved.reduce((s, t) => s + (t.amount > 100 ? 5 : t.amount), 0),
-        count: 10 + binApproved.length,
-        currency: 'USD',
-      },
+      jazzcash: { amount: 0, count: 0, currency: 'PKR' },
+      easypaisa: { amount: 0, count: 0, currency: 'PKR' },
+      binance: { amount: 0, count: 0, currency: 'USD' },
     },
   };
 
@@ -2331,6 +3796,16 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         snackBarMessage,
         setSnackBarMessage,
         clearPaymentNotification,
+        refreshInstalledPackages,
+        isRefreshingPackages,
+        catalogSource,
+        favoriteGamePackages,
+        recentGamePackages,
+        toggleFavoriteGame,
+        markGamePlayed,
+        launchSelectedGame,
+        installGameFromStore,
+        resetAppBlockRules,
         serverRegions,
         selectedRegionId,
         activeRegion,
@@ -2340,6 +3815,8 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         selectPingRegion,
         networkDiagnostics,
         runFullNetworkDiagnostics,
+        optimizeNetworkRoute,
+        toggleAutoOptimizeNetwork,
         fpsHistory,
         applyOptimizationProfile,
         perGameProfiles,
@@ -2355,23 +3832,39 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         logCrashDiagnostic,
         submitManualPerformanceSnapshot,
         firewallState,
-        toggleFirewallMaster,
+        toggleDnsFilter,
+        toggleBlockAllNonSelected,
         requestFirewallVpnPermission,
         setProtectedGame,
         applyFirewallPreset,
         restorePreviousFirewallRules,
         smartSession,
+        masterBoostActive,
+        superBoost,
+        selectedSuperBoostGamePkg,
+        setSelectedSuperBoostGamePkg,
+        recoveryHistory,
+        handleToggleBoost,
+        activateSuperBoost,
+        stopSuperBoost,
+        isBoostDetailsOpen,
+        setIsBoostDetailsOpen,
+        boostDetailsSummary,
+        permissionFlow,
+        handlePermissionFlowAllow,
+        requestSequentialBoostPermissions,
+        skipPermissionFlowStep,
+        closePermissionFlow,
         thermalMonitor,
         refreshThermalTelemetry,
         setThermalAlertThreshold,
         toggleAutoCoolOnHighTemp,
         dismissThermalWarning,
         applyThermalCooldownProfile,
-        toggleGamingMode,
         setFpsMode,
         toggleAppBlock,
         toggleAllAppsBlock,
-        applyVpnFirewall,
+        toggleBatterySaver,
         cleanRam,
         refreshHardwareTelemetry,
         clearTemporaryCache,
@@ -2379,8 +3872,11 @@ export const BoosterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         updateSetting,
         launchGameWithAutoBoost,
         stopGamingMode,
-        startRewardBoost,
-        tapToBoost,
+        setBoostDurationPreset,
+        grantAdBoostTime,
+        unlockFpsWithAd,
+        isFpsTierUnlocked,
+        resetNetworkInterfaceAndRoute,
         submitTransaction,
         approveTransaction,
         rejectTransaction,
